@@ -3,17 +3,21 @@
 
 #include <iostream>
 
-template<typename T>
+template<typename TType>
 class Pool{
 	private:
-		T obj;
+		TType *obj;
 	public:
 		class Object{
 			public:
+				TType* operator->();
 					
 		};
-	void resize(const size_t& numberOfObjectsStored);
-	template
+	void resize(const size_t& numberOfObjectsStored){
+		obj[5];
+	};
+	template<typename... TArgs>
+	Object acquire(TArgs&&... p_args);
 };
 
 
