@@ -2,9 +2,9 @@ NAME		= libftpp.a
 LIBCPP		= ar rc
 CXX			= c++
 RM			= rm -f
-CXXFLAGS	= -Wall -Wextra -Werror -pedanctic -std=c++20
+CXXFLAGS	= -Wall -Wextra -Werror -pedantic -std=c++11
 
-INC_DIR		= -I ./inc/ \
+INC_DIRS	= -I ./inc/ \
 					-I ./data_struct/inc/ \
 					-I ./design_patterns/inc/ \
 					-I ./network/inc/ \
@@ -15,24 +15,39 @@ SRC_DIR		= ./data_struct/src/ \
 					./network/src/ \
 					./thread/src/
 
+# DATA_DIR	= data_struct/src/
+# DESIGN_DIR	= design_patterns/src/
+# NET_DIR		= network/src/
+# THREAD_DIR	= thread/src/
+# 
+# DATA		= data_struct.cpp
+# 
+# DATA_SRC	= $(addprefix $(DATA_DIR), $(DATA))
 
-SRCS		= 
-SRC			= $(addprefix $(SRC_DIR), $(SRCS))
-OBJS		= $(SRCS:.cpp=.o)
-OBJ			= $(addprefix $(OBJ_DIR), $(OBJS))
+
+OBJ_DIR		= ./obj/
+
+
+
+# SRC			= $(DATA_SRC)
+SRCS		= $(shell find $(SRC_DIR) -name '*.cpp')
+OBJS		= $(patsubst %.cpp, $(OBJ_DIR)%.o, $(SRCS))
+# OBJ			= $(addprefix $(OBJ_DIR)/, $(SRC:.cpp=.o))
 
 
 all: ${NAME}
-
-.c.o:
-	${CXX} ${CXXFLAGS} -c ${SRC}
 
 ${NAME}: ${OBJS}
 	${LIBCPP} ${NAME} ${OBJS}
 
 
+$(OBJ_DIR)%.o: %.cpp
+	mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -c $< -o $@ $(INC_DIRS)
+
+
 clean:
-	${RM} ${OBJS}
+	${RM} ${OBJ}
 
 fclean: clean
 	${RM} ${NAME}
