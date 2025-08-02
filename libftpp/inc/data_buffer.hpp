@@ -1,25 +1,31 @@
 #ifndef DATA_BUFFER_HPP
 #define DATA_BUFFER_HPP
 
-#include <queue>
 #include <memory>
 #include <cstring>
+#include <sstream>
 #include "pool.hpp"
 
 class DataBuffer{
 	public:
 		template <typename T>
-		friend uintptr_t operator<<(DataBuffer& data, T to_seri);
+		DataBuffer& operator<<(const T& to_seri){
+			_raw << to_seri << " ";
+			return *this;
+		}
 		template <typename T>
-		friend T operator>>(DataBuffer& data, T to_deseri);
+		DataBuffer& operator>>(T& to_deseri){
+			if (_raw.eof() == true) throw std::runtime_error("empty");
+			_raw >> to_deseri;	
+			return *this;
+		}
+	
 		
+		DataBuffer();
+		~DataBuffer();
 	private:
-		std::queue<uintptr_t> raw;
+		std::stringstream _raw;
 };
 
-template <typename T>
-uintptr_t operator<<(DataBuffer& data, T to_seri);
-template <typename T>
-T operator>>(DataBuffer& data, T to_deseri);
-
 #endif
+

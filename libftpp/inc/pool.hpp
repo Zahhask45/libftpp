@@ -18,10 +18,8 @@ class Pool{
 				Object(Pool *p, TType* obj, size_t i): pool(p), ptr(obj), index(i){}
 			public:
 				~Object(){
-					if (ptr){
-						ptr->~TType();
-						pool->used[index] = false;
-					}
+					ptr->~TType();
+					pool->used[index] = false;
 				}
 				
 				TType* operator->(){
