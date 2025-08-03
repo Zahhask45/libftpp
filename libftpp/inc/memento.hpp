@@ -7,19 +7,14 @@
 
 
 class Memento{
-	private:
-		DataBuffer objs;
 	public:
-		class Snapshot{
-			private:
-				DataBuffer objs;
-				void _saveToSnapshot(Memento::Snapshot& snapshot);
-				void _loadFromSnapshot(Memento::Snapshot& snapshot);
-		};
-	friend void _saveToSnapshot(Memento::Snapshot& snapshot);
-	friend void _loadFromSnapshot(Memento::Snapshot& snapshot);
-	Snapshot save();
-	void load(const Memento::Snapshot& snapshot);
+		virtual ~Memento();
+		using Snapshot = DataBuffer;
+		Memento::Snapshot save();
+		void load(const Memento::Snapshot& snapshot);
+	private:
+		virtual void _saveToSnapshot(Memento::Snapshot& snapshot)const = 0;
+		virtual void _loadFromSnapshot(Memento::Snapshot& snapshot) = 0;
 };
 
 

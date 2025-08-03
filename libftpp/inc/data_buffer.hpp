@@ -20,9 +20,7 @@ class DataBuffer{
 			return *this;
 		}
 	
-		
-		DataBuffer();
-		~DataBuffer();
+
 	private:
 		std::stringstream _raw;
 };
