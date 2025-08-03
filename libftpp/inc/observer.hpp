@@ -1,3 +1,7 @@
+#ifndef OBSERVER_HPP
+#define OBSERVER_HPP
+
+
 #include <functional>
 #include <unordered_map>
 #include <vector>
@@ -15,3 +19,6 @@ class Observer{
 	private:
 		std::unordered_map<TEvent, std::vector<const std::function<void()>*>> events;
 };
+
+
+#endif
