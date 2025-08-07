@@ -18,7 +18,7 @@ class StateMachine{
 			U end;
 
 			bool operator==(const TransitionKey &rhs) const{
-				return (this->start == rhs.start && this->end == rhs.nd);
+				return (this->start == rhs.start && this->end == rhs.end);
 			}
 		};
 		template<typename T, typename U>
@@ -34,7 +34,7 @@ class StateMachine{
 			if (!_curstate){
 				_curstate = new TState(state);
 			}
-			_states[state] = state;
+			_states[state];
 			
 		};
 		void addAction(const TState& state, const std::function<void()>& lambda){
@@ -63,12 +63,15 @@ class StateMachine{
 		};
 		void update(){
 			if (!_curstate) throw std::runtime_error("empty");
-			for (auto lambda : _states[_curstate])
+			for (auto lambda : _states[*_curstate])
 				(*lambda)();
 		};
 		StateMachine(){
 			_curstate = nullptr;
 		};
+		~StateMachine(){
+			delete _curstate;
+		}
 	private:
 		std::unordered_map<TState, std::vector<const std::function<void()>*>> _states;
 		std::unordered_map<TransitionKey<TState, TState>, std::vector<const std::function<void()>*>, stateHash<TState, TState>> _transitions;
