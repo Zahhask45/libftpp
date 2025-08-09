@@ -1,16 +1,19 @@
 #include <iostream>
 #include <thread>
 #include "thread_safe_queue.hpp"
+#include "thread_safe_iostream.hpp"
 
 void testPush(ThreadSafeQueue<int>& p_queue, int p_value) {
+    threadSafeCout.setPrefix("Banana");
     p_queue.push_back(p_value);
-    std::cout << "Pushed value: " << p_value << std::endl;
+    threadSafeCout << " Pushed value: " << p_value << std::endl;
 }
 
 void testPop(ThreadSafeQueue<int>& p_queue) {
     try {
+        threadSafeCout.setPrefix("Banana");
         int value = p_queue.pop_front();
-        std::cout << "Popped value: " << value << std::endl;
+        threadSafeCout << " Popped value: " << value << std::endl;
     } catch (const std::runtime_error& e) {
         std::cout << e.what() << std::endl;
     }
