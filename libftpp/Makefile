@@ -14,7 +14,8 @@ OBJ_DIR		= ./obj/
 SRCS		= data_buffer.cpp \
 				memento.cpp \
 				thread_safe_iostream.cpp \
-				thread.cpp
+				thread.cpp \
+				worker_pool.cpp
 
 SRC			= $(addpredix $(SRC_DIR), $(SRCS))
 OBJS		= $(SRCS:.cpp=.o)
