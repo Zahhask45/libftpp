@@ -2,7 +2,7 @@ NAME		= libftpp.a
 LIBCPP		= ar rc
 CXX			= c++
 RM			= rm -rf
-CXXFLAGS	= -Wall -Wextra -Werror -pedantic -std=c++11
+CXXFLAGS	= -Wall -Wextra -Werror -pedantic -std=c++11 -g
 
 INC			= -I ./inc/
 
@@ -37,6 +37,7 @@ $(OBJ_DIR):
 
 clean:
 	${RM} ${OBJ_DIR}
+	${RM} a.out
 
 fclean: clean
 	${RM} ${NAME}
