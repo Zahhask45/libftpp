@@ -54,18 +54,3 @@ void WorkerPool::_startThread() {
     }
   }
 }
-
-int WorkerPool::checker() {
-  {
-
-    std::lock_guard<std::mutex> lock(_guard);
-    if (_stopthat)
-      return 1;
-  }
-  {
-    std::unique_lock<std::mutex> lock(_queueMutex);
-    if (_queue.empty() == false)
-      return 1;
-  }
-  return 0;
-}

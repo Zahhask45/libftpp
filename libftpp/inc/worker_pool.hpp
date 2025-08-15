@@ -21,7 +21,6 @@ public:
   WorkerPool(int amount);
   ~WorkerPool();
   void addJob(const std::function<void()> &jobToExecute) override;
-  int checker();
 
 private:
   void _startThread();
