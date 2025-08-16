@@ -16,7 +16,8 @@ SRCS		= data_buffer.cpp \
 				thread_safe_iostream.cpp \
 				thread.cpp \
 				worker_pool.cpp \
-				persistent_worker.cpp
+				persistent_worker.cpp \
+				message.cpp
 
 SRC			= $(addpredix $(SRC_DIR), $(SRCS))
 OBJS		= $(SRCS:.cpp=.o)
