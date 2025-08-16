@@ -5,4 +5,6 @@ Message::Message(int type)
       _sstream(std::ios_base::in | std::ios_base::out | std::ios_base::binary) {
 }
 
-
+Message::Type Message::getType(){
+  return _type;
+}
