@@ -24,6 +24,9 @@ class Message {
     };
 
     Type getType();
+
+    std::string serialize() const;
+    static Message deserialize(std::stringstream &ss);
   private: 
     Type _type;
     std::stringstream _sstream;
