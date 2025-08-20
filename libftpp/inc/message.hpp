@@ -11,6 +11,8 @@ class Message {
     int type();
 
     Message(int type);
+    Message(const Message& other);
+    Message(){};
     template<typename T>
     Message &operator<< (const T &obj) {
       const_cast<Message &>(*this)._sstream << obj;
@@ -18,7 +20,7 @@ class Message {
     };
   
     template<typename T>
-      const Message &operator >> (T & obj) const {
+      const Message &operator>> (T & obj) const {
         const_cast<Message&>(*this)._sstream >> obj;
         return *this;
     };

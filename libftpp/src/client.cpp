@@ -13,22 +13,23 @@ void Client::connect(const std::string& address, const size_t& port){
 
 	if (addressTemp == "localhost")
 		addressTemp = "127.0.0.1";
+
 	if (inet_pton(AF_INET, addressTemp.c_str(), &_serv_addr.sin_addr) <= 0){
 		std::cerr << "Invalid address or address not suported" << std::endl;
 		close(_socket);
 		return ;
 	}
 	if (::connect(_socket, (struct sockaddr *)&_serv_addr, sizeof(_serv_addr)) < 0){
-		std::cerr << "Connection to " << address << ":" << port << "failed" << std::endl;
+		std::cerr << "Connection to " << address << ":" << port << " failed" << std::endl;
 		close(_socket);
 		return ;
 	}
-	std::cout << "Connection made to" << address << ":" << port << std::endl;
+	std::cout << "Connection made to " << address << ":" << port << std::endl;
 	
 }
 void Client::disconnect(){
 	std::cout << "Disconnecting ..." << std::endl;
-	close(_socket);
+	// close(_socket);
 }
 
 void Client::defineAction(const Message::Type& messageType, const std::function<void(const Message& msg)>& action){
@@ -54,6 +55,29 @@ void Client::send(const Message& message){
 	
 }
 
+bool Client::receiveMsg(const std::string &buffer){
+	_buffer.append(buffer.c_str(), buffer.size());
+	while (true){
+		if (_msgSize == 0){
+			auto size = _buffer.find("\r\n");
+			if (size != std::string::npos){
+				_msgSize = std::stoi(_buffer);
+				_buffer.erase(0, (size + 2));// +2 for the \r\n
+			}
+		}
+		if (_msgSize != 0 && _buffer.size() >= _msgSize){
+			std::string msg = _buffer.substr(0, _msgSize);
+			_buffer.erase(0, _msgSize);
+			std::stringstream ss;
+			ss << msg;
+			_msgQueue.push(new Message(Message::deserialize(ss)));
+			continue;
+		}
+		break;
+	}
+	return true;
+}
+
 void Client::update(){
 	std::cout << "Updating client ..." << std::endl;
 
@@ -63,5 +87,23 @@ void Client::update(){
 	if (bytesRead > 0){
 		buffer[bytesRead] = '\0';
 		std::string dataReceived(buffer, bytesRead);
+		this->receiveMsg(dataReceived);
+		auto msgQueue = this->getMessages();
+		while (msgQueue->empty() == false){
+			auto msg = msgQueue->front();
+			msgQueue->pop();
+
+			auto action = _actions.find(msg->getType());
+			if (action != _actions.end())
+				action->second(*msg);
+			else
+				std::cerr << "No action defined" << std::endl;
+		}
 	}
+	else if (bytesRead == 0){
+		std::cerr << "Server closed the connection" << std::endl;
+		disconnect();
+	}
+	else
+		std::cerr << "Failed to receive Message: " << strerror(errno) << std::endl;
 }

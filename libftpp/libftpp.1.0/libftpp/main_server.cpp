@@ -12,7 +12,7 @@ int main() {
         threadSafeCout << "Received an int " << value << " from client " << clientID << std::endl;
 
         // Send back a message of type 3 with double the value
-        Message replyMsg;
+        Message replyMsg(3);
         replyMsg << (value * 2);
         server.sendTo(replyMsg, clientID);
     });
@@ -38,7 +38,7 @@ int main() {
 
 	while (!quit)
 	{
-		client.update();
+		server.update();
 
 		threadSafeCout << "Server updated." << std::endl;
 		threadSafeCout << "Available operations :" << std::endl;
