@@ -28,6 +28,7 @@ void Server::start(const size_t& p_port){
 }
 
 void Server::defineAction(const Message::Type& messageType, const std::function<void(long long& clientID, const Message& msg)>& action){
+	std::cout << "Server defineAction of Type: " << messageType << std::endl;
 	_actions[messageType] = action;
 }
 
@@ -118,7 +119,7 @@ void Server::update(){
 			it->second->receiveMsg(buffer);
 			auto msgQueue = it->second->getMessages();
 
-			while (!msgQueue->empty()){
+			while (msgQueue->empty() == false){
 				auto msg = msgQueue->front();
 				msgQueue->pop();
 				auto action = _actions.find(msg->getType());

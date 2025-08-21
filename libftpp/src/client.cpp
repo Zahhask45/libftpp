@@ -29,11 +29,10 @@ void Client::connect(const std::string& address, const size_t& port){
 }
 void Client::disconnect(){
 	std::cout << "Disconnecting ..." << std::endl;
-	// close(_socket);
+	close(_socket);
 }
 
 void Client::defineAction(const Message::Type& messageType, const std::function<void(const Message& msg)>& action){
-	std::cout << "Action for messageType: " << messageType << std::endl;
 	_actions[messageType] = action;
 }
 
@@ -71,6 +70,7 @@ bool Client::receiveMsg(const std::string &buffer){
 			std::stringstream ss;
 			ss << msg;
 			_msgQueue.push(new Message(Message::deserialize(ss)));
+			this->_msgSize = 0;
 			continue;
 		}
 		break;
