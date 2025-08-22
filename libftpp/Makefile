@@ -19,7 +19,8 @@ SRCS		= data_buffer.cpp \
 				persistent_worker.cpp \
 				message.cpp \
 				client.cpp \
-				server.cpp
+				server.cpp \
+				ivector2.cpp
 
 SRC			= $(addpredix $(SRC_DIR), $(SRCS))
 OBJS		= $(SRCS:.cpp=.o)
