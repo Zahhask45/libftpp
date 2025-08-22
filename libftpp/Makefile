@@ -20,7 +20,8 @@ SRCS		= data_buffer.cpp \
 				message.cpp \
 				client.cpp \
 				server.cpp \
-				ivector2.cpp
+				ivector2.cpp \
+				ivector3.cpp
 
 SRC			= $(addpredix $(SRC_DIR), $(SRCS))
 OBJS		= $(SRCS:.cpp=.o)
