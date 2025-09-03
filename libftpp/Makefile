@@ -22,7 +22,8 @@ SRCS		= data_buffer.cpp \
 				server.cpp \
 				ivector2.cpp \
 				ivector3.cpp \
-				random_2D_coordinate_generator.cpp
+				random_2D_coordinate_generator.cpp \
+				perlin_noise_2D.cpp
 
 SRC			= $(addpredix $(SRC_DIR), $(SRCS))
 OBJS		= $(SRCS:.cpp=.o)

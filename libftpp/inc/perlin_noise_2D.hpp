@@ -3,15 +3,21 @@
 
 #include "ivector2.hpp"
 #include <vector>
+#include <iostream>
+#include <cstdlib>
+#include <time.h>
 
 class PerlinNoise2D{
 	public:
 		PerlinNoise2D();
-		~PerlinNoise2D();
 		float sample(float x, float y);
 		float operator()(float x, float y);
 	private:
-		std::vector<int> permutation; 
+		void shuffleTable();
+		float fade(float t) const;
+		IVector2<float> grad(int hash);
+	private:
+		std::vector<int> permutation;
 };
 
 #endif
