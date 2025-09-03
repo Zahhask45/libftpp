@@ -15,7 +15,7 @@ int main() {
             float sample = perlin.sample(x * 0.1f, y * 0.1f); // Adjust these factors as needed
             sample = (sample + 1) / 2; // Map from [-1, 1] to [0, 1]
             int charIndex = std::round(sample * 9); // Map from [0, 1] to [0, 9]
-
+            // std::cout << "\033[1;31m" << charIndex << "\033[0m" << std::endl;
             std::cout << visualChars[charIndex] << " ";
         }
         std::cout << std::endl;
