@@ -21,6 +21,10 @@ Message::Type Message::getType(){
   return _type;
 }
 
+Message::Type Message::type(){
+  return _type;
+}
+
 std::string Message::serialize() const{
   std::ostringstream oss;
 

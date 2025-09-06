@@ -94,7 +94,7 @@ void Client::send(const Message &message){
 	_msgsToSend.push(message);
 }
 
-void Client::defineAction(const Message::Type &messageType, Action &action){
+void Client::defineAction(const Message::Type &messageType, const Action &action){
 	std::lock_guard<std::mutex> lock(_mtx);
 	_actions[messageType] = action;
 	

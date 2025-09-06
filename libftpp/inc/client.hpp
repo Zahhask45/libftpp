@@ -30,7 +30,7 @@ class Client{
 
 		
 		void send(const Message &message);
-		void defineAction(const Message::Type &messageType, Action &action);
+		void defineAction(const Message::Type &messageType, const Action &action);
 		
 		void update();
 
