@@ -8,9 +8,9 @@
 class Message {
   public:
     using Type = int;
-    int type();
+    Type type();
 
-    Message(int type);
+    Message(Type type);
     Message(const Message& other);
     Message(){};
     template<typename T>
@@ -24,6 +24,8 @@ class Message {
         const_cast<Message&>(*this)._sstream >> obj;
         return *this;
     };
+
+    Message &operator=(const Message &message);
 
     Type getType();
 

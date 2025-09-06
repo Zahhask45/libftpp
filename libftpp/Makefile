@@ -2,7 +2,7 @@ NAME		= libftpp.a
 LIBCPP		= ar rc
 CXX			= c++
 RM			= rm -rf
-CXXFLAGS	= -Wall -Wextra -Werror -pedantic -std=c++11 -g
+CXXFLAGS	= -Wall -Wextra -Werror -pedantic -std=c++17 -g
 
 INC			= -I ./inc/
 
