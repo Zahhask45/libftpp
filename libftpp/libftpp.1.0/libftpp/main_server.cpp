@@ -39,7 +39,7 @@ int main() {
 		threadSafeCout << e.what() << std::endl;
 	}
 
-	std::string input = " ";
+	std::string input = "";
 	while (input.compare("quit") && input.compare("q"))
 	{
 		try {
@@ -61,6 +61,7 @@ int main() {
 			[](unsigned char c){ return std::tolower(c); });
 	}
 
+	server.stop();
 	threadSafeCout << "Server stopped." << std::endl;
 
 	return 0;

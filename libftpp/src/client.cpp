@@ -1,4 +1,5 @@
 #include "client.hpp"
+#include "thread_safe_iostream.hpp"
 
 Client::Client(): _sockfd(-1), _isConnected(false){}
 
@@ -15,12 +16,14 @@ void Client::connect(const std::string &address, const size_t &port){
 		throw ConnectionFailedException("Failed to create socket");
 
 	int flags = fcntl(_sockfd, F_GETFL, 0);
-	if (flags == -1 || fcntl(_sockfd, F_SETFL, flags | O_NONBLOCK) == -1)
+	if (flags == -1 || fcntl(_sockfd, F_SETFL, flags | O_NONBLOCK) == -1){
+		close(_sockfd);
 		throw ConnectionFailedException("Failed to set non-block mode");
+	}
 
 	sockaddr_in servAddr{};
 	servAddr.sin_family = AF_INET;
-	servAddr.sin_port = htons(port);
+	servAddr.sin_port = htons(static_cast<uint16_t>(port));
 
 	if (address == "localhost"){
 		struct addrinfo hints{}, *res;
@@ -28,8 +31,10 @@ void Client::connect(const std::string &address, const size_t &port){
 		hints.ai_socktype = SOCK_STREAM;
 
 		int status = getaddrinfo("localhost", nullptr, &hints, &res);
-		if (status != 0)
+		if (status != 0){
+			close(_sockfd);
 			throw ConnectionFailedException("Failed to resolve localhost");
+		}
 
 		servAddr.sin_addr = reinterpret_cast<sockaddr_in *>(res->ai_addr)->sin_addr;
 		freeaddrinfo(res);
@@ -44,30 +49,30 @@ void Client::connect(const std::string &address, const size_t &port){
 			close(_sockfd); 
 			throw ConnectionFailedException("Failed to connect");
 		}
-	}
 
-	fd_set writefds;
-	FD_ZERO(&writefds);
-	FD_SET(_sockfd, &writefds);
+		fd_set writefds;
+		FD_ZERO(&writefds);
+		FD_SET(_sockfd, &writefds);
 
-	struct timeval timeout;
-	timeout.tv_sec = 5;
-	timeout.tv_usec = 0;
+		struct timeval timeout;
+		timeout.tv_sec = 5;
+		timeout.tv_usec = 0;
 
-	int selectResult =  select(_sockfd + 1, nullptr, &writefds, nullptr, &timeout);
-	if (selectResult == 0){
-		close(_sockfd);
-		throw ConnectionFailedException("Failed to connect(timeout)");
-	} else if (selectResult < 0 || !FD_ISSET(_sockfd, &writefds)){
-		close(_sockfd);
-		throw ConnectionFailedException("Failed to connect(select error)");
-	}
+		int selectResult =  select(_sockfd + 1, nullptr, &writefds, nullptr, &timeout);
+		if (selectResult == 0){
+			close(_sockfd);
+			throw ConnectionFailedException("Failed to connect(timeout)");
+		} else if (selectResult < 0 || !FD_ISSET(_sockfd, &writefds)){
+			close(_sockfd);
+			throw ConnectionFailedException("Failed to connect(select error)");
+		}
 
-	int error = 0;
-	socklen_t len = sizeof(error);
-	if (getsockopt(_sockfd, SOL_SOCKET, SO_ERROR, &error, &len) < 0 || error != 0){
-		close(_sockfd);
-		throw ConnectionFailedException("Failed to connect: " + std::string(strerror(error)));
+		int error = 0;
+		socklen_t len = sizeof(error);
+		if (getsockopt(_sockfd, SOL_SOCKET, SO_ERROR, &error, &len) < 0 || error != 0){
+			close(_sockfd);
+			throw ConnectionFailedException("Failed to connect: " + std::string(strerror(error)));
+		}
 	}
 
 	_isConnected = true;
@@ -128,7 +133,7 @@ void Client::update(){
 
 void Client::receiveMsg(ClientBuf &clientBuf){
 	if (clientBuf.state == ClientBuf::NOSIZE){
-		clientBuf.bytesRead = ::recv(_sockfd,
+		clientBuf.bytesRead = recv(_sockfd,
 				&clientBuf.size + clientBuf.totalBytes,
 				sizeof(clientBuf.size) - clientBuf.totalBytes,
 				0);
@@ -146,7 +151,7 @@ void Client::receiveMsg(ClientBuf &clientBuf){
 		clientBuf.totalBytes = 0;
 		clientBuf.data.resize(clientBuf.size, '\0');
 	} else if (clientBuf.state == ClientBuf::SIZE){
-		clientBuf.bytesRead = ::recv(_sockfd,
+		clientBuf.bytesRead = recv(_sockfd,
 				clientBuf.data.data() + clientBuf.totalBytes,
 				clientBuf.size - clientBuf.totalBytes,
 				0);

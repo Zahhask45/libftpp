@@ -20,7 +20,7 @@
 
 class Client{
 	public:
-		using Action = std::function<void(const Message &msg)>;
+		using Action = std::function<void(Message &msg)>;
 
 		Client();
 		~Client();

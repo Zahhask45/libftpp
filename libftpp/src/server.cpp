@@ -1,9 +1,10 @@
 #include "server.hpp"
+#include "thread_safe_iostream.hpp"
 
 Server::Server(): _sockfd(-1), _isOn(false){}
 
 Server::~Server(){
-	
+	stop();
 }
 
 void Server::start(const size_t &p_port){
@@ -21,7 +22,7 @@ void Server::start(const size_t &p_port){
 	}
 
 	int flags = fcntl(_sockfd, F_GETFL, 0);
-	if (flags == -1 || fcntl(_sockfd, F_SETFL, flags | O_NONBLOCK) == 1){
+	if (flags == -1 || fcntl(_sockfd, F_SETFL, flags | O_NONBLOCK) == -1){
 		close(_sockfd);
 		throw FailedToStartException("Failed to set the non-block mode.");
 	}
@@ -53,6 +54,7 @@ void Server::stop(){
 	if (_receiver.joinable())
 		_receiver.join();
 
+	threadSafeCout << "God damn donut." << std::endl;
 	for (const auto &[clientID, client] : _clients){
 		close(client.sockfd);
 	}
@@ -164,6 +166,7 @@ void Server::sendMsg(const Message &message, ClientID clientID){
 		throw UnknownClientException();
 
 	std::string data = message.serialize();
+	threadSafeCout << "test " << data << std::endl;
 	size_t size = data.size();
 
 	if (send(it->second.sockfd, &size, sizeof(size), 0) < 0)
@@ -177,7 +180,7 @@ std::map<Server::ClientID, Server::Client>::iterator Server::receiveMsg(std::map
 	Client& client = it->second;
 
 	if (client.state == Client::NOSIZE){
-		client.bytesRead = ::recv(client.sockfd,
+		client.bytesRead = recv(client.sockfd,
 			&client.size + client.totalBytes,
 			sizeof(client.size) - client.totalBytes, 0);
 
@@ -194,8 +197,9 @@ std::map<Server::ClientID, Server::Client>::iterator Server::receiveMsg(std::map
 		client.state = Client::SIZE;
 		client.totalBytes = 0;
 		client.data.resize(client.size, '\0');
+		
 	} else if (client.state == Client::SIZE){
-		client.bytesRead = ::recv(client.sockfd,
+		client.bytesRead = recv(client.sockfd,
 			client.data.data() + client.totalBytes,
 			client.size - client.totalBytes, 0);
 
@@ -204,6 +208,10 @@ std::map<Server::ClientID, Server::Client>::iterator Server::receiveMsg(std::map
 			it = _clients.erase(it);
 			return it;
 		}
+
+		client.totalBytes += client.bytesRead;
+		if (client.totalBytes < client.size)
+			return ++it;
 
 		client.state = Client::MESSAGE;
 		client.totalBytes = 0;
@@ -264,7 +272,7 @@ void Server::receiveMsgs(){
 
 		{
 			std::lock_guard<std::mutex> lock(_mtx);
-			for (auto it = _clients.begin(); it != _clients.end();){
+			for (auto it = _clients.begin(); it != _clients.end(); it++){
 				if (FD_ISSET(it->second.sockfd, &writefds)){
 					auto msgIt = _msgsToSend.find(it->first);
 					if (msgIt != _msgsToSend.end() && !msgIt->second.empty()){

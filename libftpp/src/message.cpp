@@ -3,7 +3,6 @@
 Message::Message(Type type)
     : _type(type),
       _sstream(std::ios_base::in | std::ios_base::out | std::ios_base::binary) {
-      std::cout << "Message created with type: " << _type << std::endl;
 }
 
 Message::Message(const Message& other): _type(other._type),

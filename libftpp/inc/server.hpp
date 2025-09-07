@@ -26,6 +26,7 @@ class Server{
 		~Server();
 
 		void start(const size_t &p_port);
+		void stop();
 
 		void defineAction(const Message::Type &messageType, const Action &action);
 		
@@ -63,7 +64,6 @@ class Server{
 		std::mutex _mtx;
 
 	private:
-		void stop();
 		void receiveMsgs();
 		void acceptConnection();
 		std::map<ClientID, Client>::iterator receiveMsg(std::map<ClientID, Client>::iterator it);
