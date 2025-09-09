@@ -1,43 +1,30 @@
 #include "message.hpp"
 
 Message::Message(Type type)
-    : _type(type),
-      _sstream(std::ios_base::in | std::ios_base::out | std::ios_base::binary) {
-}
-
-Message::Message(const Message& other): _type(other._type),
-      _sstream(std::ios_base::in | std::ios_base::out | std::ios_base::binary) {
-  _sstream << other._sstream.rdbuf();
-}
-
-Message &Message::operator=(const Message &message){
-  this->_type = message._type;
-  this->_sstream << message._sstream.rdbuf();
-  return *this;
-}
-
-Message::Type Message::getType(){
-  return _type;
-}
+    : _type(type){}
 
 Message::Type Message::type(){
   return _type;
 }
 
 std::string Message::serialize() const{
-  std::ostringstream oss;
+  std::string seri;
+  seri.resize(sizeof(_type) + _data.data().size());
 
-  oss << _type << " ";
-  oss << _sstream.rdbuf();
-  return oss.str();
+  std::memcpy(seri.data(), &_type, sizeof(_type));
+  std::memcpy(seri.data() + sizeof(_type), _data.data().data(), _data.data().size());
+
+  return seri;
 }
 
-Message Message::deserialize(std::stringstream &ss){
-  Type type;
-  ss >> type;
+void Message::deserialize(const std::string &str){
+  if (str.size() < sizeof(_type))
+    throw DeserializationFailedException("Failed to receive data");
 
-  Message msg(type);
-  std::string str;
-  msg._sstream << ss.rdbuf();
-  return msg;
+  std::memcpy(&_type, str.data(), sizeof(_type));
+
+  _data.data().clear();
+  _data.data().resize(str.size() - sizeof(_type));
+
+  std::memcpy(_data.data().data(), str.data() + sizeof(_type), str.size() - sizeof(_type));
 }

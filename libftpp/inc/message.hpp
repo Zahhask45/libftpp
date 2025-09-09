@@ -1,39 +1,42 @@
 #ifndef MESSAGE_HPP
 #define MESSAGE_HPP
 
-#include <iostream>
-#include <sstream>
-#include <string>
+#include "data_buffer.hpp"
+#include <stdexcept>
 
 class Message {
   public:
     using Type = int;
     Type type();
 
-    Message(Type type);
-    Message(const Message& other);
-    Message(){};
-    template<typename T>
-    Message &operator<< (const T &obj) {
-      const_cast<Message &>(*this)._sstream << obj;
-      return *this;
+    explicit Message(Type type);
+
+    template<typename TType>
+    friend Message &operator<<(Message &msg, const TType &obj) {
+      msg._data << obj;
+      return msg;
     };
   
-    template<typename T>
-      const Message &operator>> (T & obj) const {
-        const_cast<Message&>(*this)._sstream >> obj;
-        return *this;
+    template<typename TType>
+    friend const Message &operator>>(Message &msg, TType & obj){
+      msg._data >> obj;
+      return msg;
     };
 
-    Message &operator=(const Message &message);
-
-    Type getType();
-
     std::string serialize() const;
-    static Message deserialize(std::stringstream &ss);
+
+    void deserialize(const std::string &str);
+    
   private: 
     Type _type;
-    std::stringstream _sstream;
+    DataBuffer _data;
+
+  public:
+    class DeserializationFailedException : public std::runtime_error {
+      public:
+        explicit DeserializationFailedException(const std::string &msg):
+          runtime_error("Message: " + msg + "."){}
+    };
 };
 
 #endif
