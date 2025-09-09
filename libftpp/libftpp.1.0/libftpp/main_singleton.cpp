@@ -1,13 +1,15 @@
 #include <iostream>
 #include "singleton.hpp"
 
-class MyClass {
-public:
+class MyClass: public Singleton<MyClass>{
+private:
+    friend class Singleton<MyClass>;
 	MyClass(int value)
 	{
 		std::cout << "MyClass constructor, with value [" << value << "]" << std::endl;
 	}
 
+public:
     void printMessage() {
         std::cout << "Hello from MyClass" << std::endl;
     }
@@ -17,19 +19,19 @@ int main() {
     try
     {
         // This should throw an exception as instance is not yet created
-        Singleton<MyClass>::instance();
+        MyClass::instance();
     } catch (const std::exception& e) {
         std::cout << "Exception: " << e.what() << std::endl; // Output: "Exception: Instance not yet created"
     }
 
-    Singleton<MyClass>::instantiate(42); // Setting up the instance
+    MyClass::instantiate(42); // Setting up the instance
 
-    Singleton<MyClass>::instance()->printMessage(); // Output: "Hello from MyClass"
+    MyClass::instance()->printMessage(); // Output: "Hello from MyClass"
 
     try
     {
         // This should throw an exception as instance is already created
-        Singleton<MyClass>::instantiate(100);
+        MyClass::instantiate(100);
     } catch (const std::exception& e) {
         std::cout << "Exception: " << e.what() << std::endl; // Output: "Exception: Instance already created"
     }
