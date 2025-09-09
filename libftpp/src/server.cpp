@@ -54,7 +54,6 @@ void Server::stop(){
 	if (_receiver.joinable())
 		_receiver.join();
 
-	threadSafeCout << "God damn donut." << std::endl;
 	for (const auto &[clientID, client] : _clients){
 		close(client.sockfd);
 	}
@@ -166,7 +165,6 @@ void Server::sendMsg(const Message &message, ClientID clientID){
 		throw UnknownClientException();
 
 	std::string data = message.serialize();
-	threadSafeCout << "test " << data << std::endl;
 	size_t size = data.size();
 
 	if (send(it->second.sockfd, &size, sizeof(size), 0) < 0)
@@ -220,9 +218,11 @@ std::map<Server::ClientID, Server::Client>::iterator Server::receiveMsg(std::map
 	if (client.state == Client::MESSAGE){
 		client.state = Client::NOSIZE;
 		Message msg(0);
-
-		std::stringstream ss(client.data);
-		msg.deserialize(ss);
+		try {
+			msg.deserialize(client.data);
+		} catch (const std::exception &e){
+			return ++it;
+		}
 
 		auto t = _msgs.emplace_back(it->first, std::move(msg));
 	}

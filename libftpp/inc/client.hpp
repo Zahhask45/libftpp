@@ -41,7 +41,7 @@ class Client{
 				SIZE,
 				MESSAGE
 			};
-			State state;
+			State state{NOSIZE};
 			size_t size;
 			std::string data;
 			ssize_t bytesRead;

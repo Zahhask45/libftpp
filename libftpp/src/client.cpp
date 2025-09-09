@@ -171,8 +171,12 @@ void Client::receiveMsg(ClientBuf &clientBuf){
 	if (clientBuf.state == ClientBuf::MESSAGE){
 		clientBuf.state = ClientBuf::NOSIZE;
 		Message msg(0);
-		std::stringstream ss(clientBuf.data);
-		msg.deserialize(ss);
+		try{
+			
+		msg.deserialize(clientBuf.data);
+		} catch (const std::exception &e){
+			return ;
+		}
 
 		std::lock_guard<std::mutex> lock(_mtx);
 		_msgs.push_back(std::move(msg));
