@@ -43,7 +43,9 @@ class Pool{
 		size_t _total = 0;
 
 	public:
-		void resize(const size_t& numberOfObjectsStored){
+		void resize(const ssize_t& numberOfObjectsStored){
+			if (numberOfObjectsStored < 0)
+				throw InvalidAmountOfResize();
 			if (numberOfObjectsStored > _total){
 				// grow size
 				size_t objToAlloc = numberOfObjectsStored - _total;
@@ -63,7 +65,7 @@ class Pool{
 
 				while (objToRem > 0 && !_allocObj.empty()){
 					if (_availObj.empty())
-						NoAvailableObjToRemoveException();
+						throw NoAvailableObjToRemoveException();
 
 					TType *obj = _availObj.back();
 					_availObj.pop_back();
@@ -115,6 +117,11 @@ class Pool{
 		class NoAllocatedObjectsToRemoveException : public std::exception{
 			public:
 				const char *what() const noexcept {return "Pool: No Allocated Objects to Remove.";}
+		};
+
+		class InvalidAmountOfResize : public std::exception{
+			public:
+				const char *what() const noexcept {return "Pool: Invalid Amount of Resize aka negative.";}
 		};
 	
 };

@@ -73,8 +73,16 @@ int main() {
 		myPool.resize(10);
 		myPool.resize(10);
 		myPool.resize(10);
-		myPool.resize(10);
-		myPool.resize(10);
+		myPool.resize(50);
+		try{
+			myPool.resize(0);
+		}
+		catch(const std::exception& e){}
+		try{
+			myPool.resize(5);
+			myPool.resize(-1);
+		}
+		catch(const std::exception& e){}
 	}
 
 	try
