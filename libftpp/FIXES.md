@@ -464,3 +464,316 @@ c++ -std=c++17 -Wall -Wextra -Werror -pedantic \
     -I inc mandatory_smoke.cpp libftpp.a -pthread -o mandatory_smoke
 ./mandatory_smoke
 ```
+
+---
+
+# Bonus: Timer and Chronometer
+
+These are not required for the mandatory mark. The PDF describes them as:
+
+- **Timer:** stores a duration and reports whether that duration has elapsed.
+- **Chronometer:** measures how much time has elapsed.
+
+Use `std::chrono::steady_clock`, not `std::time()` or
+`std::chrono::system_clock`. `steady_clock` is monotonic, so changing the
+computer's wall clock cannot make a timer go backwards.
+
+## Timer behavior
+
+A sensible Timer API is:
+
+```cpp
+class Timer {
+public:
+    using Clock = std::chrono::steady_clock;
+    using Duration = Clock::duration;
+
+    explicit Timer(const Duration& duration);
+
+    void setDuration(const Duration& duration);
+    void start();
+    void reset();
+    bool timedOut() const;
+    bool isRunning() const;
+};
+```
+
+Expected behavior:
+
+```cpp
+Timer timer(std::chrono::milliseconds(100));
+
+timer.timedOut(); // false before start
+timer.start();
+timer.timedOut(); // normally false immediately
+
+std::this_thread::sleep_for(std::chrono::milliseconds(120));
+timer.timedOut(); // true
+
+timer.reset();
+timer.timedOut(); // false again
+```
+
+`timedOut()` should compare:
+
+```cpp
+Clock::now() - _startedAt >= _duration
+```
+
+Decide and document how zero or negative durations behave. The simplest rule
+is that a started timer with a zero duration is immediately timed out.
+
+## Chronometer behavior
+
+A sensible Chronometer API is:
+
+```cpp
+class Chronometer {
+public:
+    using Clock = std::chrono::steady_clock;
+    using Duration = Clock::duration;
+
+    Chronometer();
+
+    void start();
+    void stop();
+    void reset();
+    bool isRunning() const;
+    Duration elapsed() const;
+};
+```
+
+Expected behavior:
+
+```cpp
+Chronometer chrono;
+
+chrono.elapsed(); // zero
+chrono.start();
+std::this_thread::sleep_for(std::chrono::milliseconds(50));
+chrono.stop();
+
+// elapsed() is now approximately 50 ms
+auto milliseconds =
+    std::chrono::duration_cast<std::chrono::milliseconds>(
+        chrono.elapsed()
+    ).count();
+```
+
+The useful design choice is that `start()` resumes an already stopped
+Chronometer, while `stop()` accumulates the current interval. `reset()` clears
+the accumulated duration and stops it.
+
+For the bonus evaluation, add a main that checks:
+
+1. a timer is not timed out before it starts;
+2. a timer times out after its duration;
+3. a reset timer is no longer timed out;
+4. a chronometer accumulates one start/stop interval;
+5. a chronometer accumulates two intervals;
+6. `reset()` returns elapsed time to zero.
+
+---
+
+# Remaining mandatory hardening
+
+These are not currently preventing the library from building or from running
+the supplied mains. They are the remaining areas most likely to be questioned
+during a detailed peer evaluation.
+
+## A. PersistentWorker: protect `_tasks` consistently
+
+File: `src/persistent_worker.cpp`
+
+The task thread only needs `_guard` to read its stop flag. The public methods
+also access `_tasks`, so do not read or modify `_tasks` without the same mutex.
+
+The safe pattern is:
+
+```cpp
+std::thread task;
+
+{
+    std::lock_guard<std::mutex> lock(_guard);
+    auto it = _tasks.find(name);
+    if (it == _tasks.end())
+        throw std::runtime_error("PersistentWorker: unknown task.");
+
+    _toRemove[name] = true;
+    task = std::move(it->second);
+    _tasks.erase(it);
+}
+
+if (task.joinable())
+    task.join();
+```
+
+Do not write this:
+
+```cpp
+auto& task = _tasks[name];
+```
+
+`operator[]` creates a new entry when the name does not exist.
+
+Also reject duplicate names before creating a thread. A duplicate name must
+not create a running thread that is absent from `_tasks`.
+
+## B. Client and Server: reset stop state when reusing an object
+
+Files:
+
+- `src/client.cpp`
+- `src/server.cpp`
+
+Both classes have a `_shouldEnd` flag initialized only once:
+
+```cpp
+std::atomic<bool> _shouldEnd{false};
+```
+
+Before starting a new connection/server thread, explicitly reset it:
+
+```cpp
+_shouldEnd = false;
+```
+
+Add this in `Client::connect()` before starting `_receiver`, and in
+`Server::start()` before starting `_receiver`. Otherwise, after one disconnect
+or receive failure, reusing the same object can make the next receiver stop
+immediately.
+
+## C. Client and Server: close failure paths completely
+
+Files:
+
+- `src/client.cpp`
+- `src/server.cpp`
+
+When `connect()`, `bind()`, `listen()`, or non-blocking setup fails, close the
+socket and reset its descriptor:
+
+```cpp
+close(_sockfd);
+_sockfd = -1;
+```
+
+Do this on every failure path, not only on some of them. This prevents leaked
+file descriptors and makes a retry possible.
+
+For server shutdown, close each connected client socket and clear the client
+maps after the receiver thread has stopped:
+
+```cpp
+for (const auto& entry : _clients)
+    close(entry.second.sockfd);
+
+_clients.clear();
+_msgsToSend.clear();
+_msgs.clear();
+```
+
+## D. Client and Server: validate received payload sizes
+
+Files:
+
+- `src/client.cpp`
+- `src/server.cpp`
+
+The size received from the peer is used directly in:
+
+```cpp
+data.resize(size, '\0');
+```
+
+Add a maximum message size before allocating. For example:
+
+```cpp
+static const size_t maximumMessageSize = 16 * 1024 * 1024;
+
+if (clientBuf.size > maximumMessageSize) {
+    _shouldEnd = true;
+    return;
+}
+```
+
+Use the equivalent server-side check. This prevents a corrupted or malicious
+size header from requesting an unreasonable allocation.
+
+## E. Client and Server: handle non-blocking `send()` correctly
+
+The current `sendAll()` loop handles partial writes, but on a non-blocking
+socket `send()` can return `-1` with `errno == EAGAIN` or `EWOULDBLOCK`.
+Treating that immediately as a permanent failure can drop a valid message.
+
+The robust solution is to keep unsent bytes in a per-connection output buffer
+and retry when `select()` reports the socket writable. If keeping the current
+simple design, at least distinguish retryable errors:
+
+```cpp
+if (result < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+    continue;
+if (result <= 0)
+    throw SendingFailedException();
+```
+
+Do not busy-loop forever; a proper output queue driven by writable events is
+the better final design.
+
+## F. Vectors: avoid integer overflow before converting to float
+
+Files:
+
+- `src/ivector2.cpp`
+- `src/ivector3.cpp`
+
+This expression can overflow for large integral vectors before `sqrt()` sees
+it:
+
+```cpp
+sqrt(static_cast<float>(x * x + y * y))
+```
+
+Convert each coordinate before multiplication:
+
+```cpp
+float fx = static_cast<float>(x);
+float fy = static_cast<float>(y);
+return std::sqrt(fx * fx + fy * fy);
+```
+
+Do the same for `IVector3`. This is an improvement for large integer
+coordinates; it does not change normal test results.
+
+## G. DataBuffer: make failed string reads non-destructive
+
+File: `src/data_buffer.cpp`
+
+The current string deserializer first consumes the length and only then checks
+whether all string bytes exist. If the payload is truncated, the buffer is
+partially consumed.
+
+Check both the length field and the complete string size before erasing
+anything:
+
+```cpp
+void DataBuffer::deserialize(std::string& value) {
+    size_t size;
+
+    if (buffer.size() < sizeof(size))
+        throw NotEnoughBytesException();
+
+    std::memcpy(&size, buffer.data(), sizeof(size));
+    if (buffer.size() - sizeof(size) < size)
+        throw NotEnoughBytesException();
+
+    const char* bytes = reinterpret_cast<const char*>(
+        buffer.data() + sizeof(size)
+    );
+    value.assign(bytes, size);
+    buffer.erase(buffer.begin(),
+                 buffer.begin() + sizeof(size) + size);
+}
+```
+
+This leaves the buffer unchanged when the read fails.
