@@ -1,5 +1,5 @@
-#ifndef THREAD_queue_HPP
-#define THREAD_queue_HPP
+#ifndef THREAD_QUEUE_HPP
+#define THREAD_QUEUE_HPP
 
 #include<mutex>
 #include<deque>

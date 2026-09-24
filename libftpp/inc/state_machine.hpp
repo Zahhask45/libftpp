@@ -36,12 +36,12 @@ class StateMachine{
 			
 		};
 		
-		void addAction(const TState& state, const std::function<void()>& lambda){
-			_stateActions[state].push_back(&lambda);
+		void addAction(const TState& state, const std::function<void()>& callback){
+			_stateActions[state].push_back(callback);
 		};
 		
-		void addTransition(const TState& startState, const TState& finalState, const std::function<void()>& lambda){
-			_transitions[{startState,finalState}].push_back(&lambda);
+		void addTransition(const TState& startState, const TState& finalState, const std::function<void()>& callback){
+			_transitions[{startState,finalState}].push_back(callback);
 		};
 		
 		void transitionTo(const TState& state){
@@ -69,17 +69,11 @@ class StateMachine{
 				if (callback)
 					callback();
 		};
-		// 
-		// StateMachine(){
-		// 	_currentState = nullptr;
-		// };
-		// ~StateMachine(){
-		// 	delete _curstate;
-		// }
+		
 	private:
 		TState _currentState{};
 		bool _hasCurrentState = false;
-		std::unordered_map<TState, std::vector<const std::function<void()>>> _stateActions;
+		std::unordered_map<TState, std::vector<std::function<void()>>> _stateActions;
 		std::unordered_map<TransitionKey, std::vector<std::function<void()>>, TransitionKeyHash> _transitions;
 
 };

@@ -7,6 +7,21 @@ Client::~Client(){
 	disconnect();
 }
 
+namespace {
+	void sendAll(int socket, const char *data, size_t size){
+		size_t sent = 0;
+
+		while (sent < size){
+			ssize_t result = ::send(socket, data + sent, size - sent, 0);
+			if (result <= 0)
+				throw Client::SendingFailedException();
+
+			sent += static_cast<size_t>(result);
+		}
+	}
+}
+
+
 void Client::connect(const std::string &address, const size_t &port){
 	if (_isConnected)
 		throw AlreadyConnectException();
@@ -109,11 +124,6 @@ void Client::update(){
 	if (!_isConnected)
 		throw NoConnectException();
 
-	// if (_shouldEnd){
-	// 	disconnect();
-	// 	throw NoConnectException();
-	// }
-
 	std::vector<Message> messages;
 	std::unordered_map<Message::Type, Action> actions;
 
@@ -133,8 +143,10 @@ void Client::update(){
 
 void Client::receiveMsg(ClientBuf &clientBuf){
 	if (clientBuf.state == ClientBuf::NOSIZE){
+		char* sizeBytes =
+			reinterpret_cast<char*>(&clientBuf.size) + clientBuf.totalBytes;
 		clientBuf.bytesRead = recv(_sockfd,
-				&clientBuf.size + clientBuf.totalBytes,
+				sizeBytes,
 				sizeof(clientBuf.size) - clientBuf.totalBytes,
 				0);
 
@@ -150,6 +162,10 @@ void Client::receiveMsg(ClientBuf &clientBuf){
 		clientBuf.state = ClientBuf::SIZE;
 		clientBuf.totalBytes = 0;
 		clientBuf.data.resize(clientBuf.size, '\0');
+		if (clientBuf.size == 0){
+			clientBuf.state = ClientBuf::MESSAGE;
+			clientBuf.totalBytes = 0;
+		}
 	} else if (clientBuf.state == ClientBuf::SIZE){
 		clientBuf.bytesRead = recv(_sockfd,
 				clientBuf.data.data() + clientBuf.totalBytes,
@@ -190,10 +206,10 @@ void Client::sendMsg(const Message &message){
 	std::string data = message.serialize();
 	size_t size = data.size();
 
-	if (::send(_sockfd, &size, sizeof(size), 0) < 0)
-		throw SendingFailedException();
-	if (::send(_sockfd, data.c_str(), size, 0) < 0)
-		throw SendingFailedException();
+	sendAll(_sockfd, reinterpret_cast<const char*>(&size), sizeof(size));
+
+	if (!data.empty())
+		sendAll(_sockfd, data.data(), data.size());
 }
 
 
@@ -210,7 +226,10 @@ void Client::receiveMsgs(){
 		FD_SET(_sockfd, &writefds);
 		int max_fd = _sockfd;
 
-		int act = select(max_fd + 1, &readfds, &writefds, nullptr, nullptr);
+		struct timeval timeout;
+		timeout.tv_sec = 0;
+		timeout.tv_usec = 100000;
+		int act = select(max_fd + 1, &readfds, &writefds, nullptr, &timeout);
 		if (act < 0)
 			continue;
 			

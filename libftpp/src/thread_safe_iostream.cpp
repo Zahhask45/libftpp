@@ -1,7 +1,7 @@
 #include "thread_safe_iostream.hpp"
 
 thread_local ThreadSafeIOStream threadSafeCout;
-// std::mutex ThreadSafeIOStream::_mutex;
+std::mutex ThreadSafeIOStream::_mutex;
 
 ThreadSafeIOStream &
 ThreadSafeIOStream::operator<<(std::ostream &(*manipulator)(std::ostream &)) {

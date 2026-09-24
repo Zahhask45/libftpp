@@ -12,7 +12,7 @@ float IVector2<TType>::length() const{
 }
 
 template<typename TType>
-IVector2<float> IVector2<TType>::normalize(){
+IVector2<float> IVector2<TType>::normalize() const{
 	float len = this->length();
 	if (len == 0.0f)
 		return IVector2<float>(0.0f, 0.0f);
@@ -21,42 +21,42 @@ IVector2<float> IVector2<TType>::normalize(){
 }
 
 template<typename TType>
-float IVector2<TType>::dot(IVector2<TType>& v2){
+float IVector2<TType>::dot(const IVector2<TType>& v2) const{
 	return static_cast<float>(x * v2.x + y * v2.y);
 }
 
 template<typename TType>
-IVector2<TType> IVector2<TType>::cross(){
+IVector2<TType> IVector2<TType>::cross() const{
 	return IVector2<TType>(-y, x);
 }
 
 template<typename TType>
-IVector2<TType> IVector2<TType>::operator+(IVector2<TType>& v2){
+IVector2<TType> IVector2<TType>::operator+(const IVector2<TType>& v2) const{
 	return IVector2<TType>(this->x + v2.x, this->y + v2.y);
 }
 
 template<typename TType>
-IVector2<TType> IVector2<TType>::operator-(IVector2<TType>& v2){
+IVector2<TType> IVector2<TType>::operator-(const IVector2<TType>& v2) const{
 	return IVector2<TType>(this->x - v2.x, this->y - v2.y);
 }
 
 template<typename TType>
-IVector2<TType> IVector2<TType>::operator*(IVector2<TType>& v2){
+IVector2<TType> IVector2<TType>::operator*(const IVector2<TType>& v2) const{
 	return IVector2<TType>(this->x * v2.x, this->y * v2.y);
 }
 
 template<typename TType>
-IVector2<TType> IVector2<TType>::operator/(IVector2<TType>& v2){
+IVector2<TType> IVector2<TType>::operator/(const IVector2<TType>& v2) const{
 	return IVector2<TType>(this->x / v2.x, this->y / v2.y);
 }
 
 template<typename TType>
-bool IVector2<TType>::operator==(IVector2<TType>& v2){
+bool IVector2<TType>::operator==(const IVector2<TType>& v2) const{
 	return (this->x == v2.x && this->y == v2.y);
 }
 
 template<typename TType>
-bool IVector2<TType>::operator!=(IVector2<TType>& v2){
+bool IVector2<TType>::operator!=(const IVector2<TType>& v2) const{
 	return !(*this == v2);
 }
 

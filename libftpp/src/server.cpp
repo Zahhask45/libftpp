@@ -7,6 +7,21 @@ Server::~Server(){
 	stop();
 }
 
+namespace{
+	void sendAll(int socket, const char* data, size_t size) {
+		size_t sent = 0;
+
+		while (sent < size) {
+			ssize_t result = ::send(socket, data + sent, size - sent, 0);
+			if (result <= 0)
+				throw Server::SendingFailedException();
+
+			sent += static_cast<size_t>(result);
+		}
+	}
+}
+
+
 void Server::start(const size_t &p_port){
 	if (_isOn)
 		throw AlreadyStartedException();
@@ -167,10 +182,10 @@ void Server::sendMsg(const Message &message, ClientID clientID){
 	std::string data = message.serialize();
 	size_t size = data.size();
 
-	if (send(it->second.sockfd, &size, sizeof(size), 0) < 0)
-		throw SendingFailedException();
-	if (send(it->second.sockfd, data.c_str(), size, 0) < 0)
-		throw SendingFailedException();
+	sendAll(it->second.sockfd, reinterpret_cast<const char*>(&size), sizeof(size));
+
+	if (!data.empty())
+		sendAll(it->second.sockfd, data.data(), data.size());
 }
 
 
@@ -178,8 +193,10 @@ std::map<Server::ClientID, Server::Client>::iterator Server::receiveMsg(std::map
 	Client& client = it->second;
 
 	if (client.state == Client::NOSIZE){
+		char* sizeBytes =
+			reinterpret_cast<char*>(&client.size) + client.totalBytes;
 		client.bytesRead = recv(client.sockfd,
-			&client.size + client.totalBytes,
+			sizeBytes,
 			sizeof(client.size) - client.totalBytes, 0);
 
 		if (client.bytesRead <= 0){
@@ -195,7 +212,10 @@ std::map<Server::ClientID, Server::Client>::iterator Server::receiveMsg(std::map
 		client.state = Client::SIZE;
 		client.totalBytes = 0;
 		client.data.resize(client.size, '\0');
-		
+		if (client.size == 0){
+			client.state = Client::MESSAGE;
+			client.totalBytes = 0;
+		}
 	} else if (client.state == Client::SIZE){
 		client.bytesRead = recv(client.sockfd,
 			client.data.data() + client.totalBytes,
@@ -250,7 +270,10 @@ void Server::receiveMsgs(){
 			}
 		}
 
-		int act = select(max_fd + 1, &readfds, &writefds, nullptr, nullptr);
+		struct timeval timeout;
+		timeout.tv_sec = 0;
+		timeout.tv_usec = 100000;
+		int act = select(max_fd + 1, &readfds, &writefds, nullptr, &timeout);
 		if (act < 0)
 			continue ;
 
@@ -272,15 +295,26 @@ void Server::receiveMsgs(){
 
 		{
 			std::lock_guard<std::mutex> lock(_mtx);
-			for (auto it = _clients.begin(); it != _clients.end(); it++){
-				if (FD_ISSET(it->second.sockfd, &writefds)){
-					auto msgIt = _msgsToSend.find(it->first);
-					if (msgIt != _msgsToSend.end() && !msgIt->second.empty()){
-						try{
-							sendMsg(msgIt->second.front(), it->first);
-						} catch (const std::exception &e){}
-						msgIt->second.pop();
-					}
+			for (auto it = _clients.begin(); it != _clients.end();){
+				if (!FD_ISSET(it->second.sockfd, &writefds)){
+					++it;
+					continue ;
+				}
+				
+				auto msgIt = _msgsToSend.find(it->first);
+				if (msgIt == _msgsToSend.end() || msgIt->second.empty()){
+					++it;
+					continue ;
+				}
+				
+				try{
+					sendMsg(msgIt->second.front(), it->first);
+					msgIt->second.pop();
+					++it;
+				} catch (const std::exception&){
+					close(it->second.sockfd);
+					_msgsToSend.erase(msgIt);
+					it = _clients.erase(it);
 				}
 			}
 		}

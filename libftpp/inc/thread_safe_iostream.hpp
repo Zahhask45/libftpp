@@ -34,7 +34,7 @@ public:
   };
 
 private:
-  std::mutex _mutex;
+  static std::mutex _mutex;
   std::string _prefix;
   std::ostringstream _buffer;
 };

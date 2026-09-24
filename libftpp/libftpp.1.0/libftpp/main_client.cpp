@@ -6,9 +6,10 @@
 int main() {
 	Client client;
 
-	client.defineAction(3, [](Message& msg){
+	client.defineAction(3, [](const Message& msg){
+		Message readableMessage = msg;
 		int doubledValue;
-		msg >> doubledValue;
+		readableMessage >> doubledValue;
 		threadSafeCout << "Received a doubled value: " << doubledValue << std::endl;
 	});
 

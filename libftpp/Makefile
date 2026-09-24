@@ -25,7 +25,7 @@ SRCS		= data_buffer.cpp \
 				random_2D_coordinate_generator.cpp \
 				perlin_noise_2D.cpp
 
-SRC			= $(addpredix $(SRC_DIR), $(SRCS))
+SRC			= $(addprefix $(SRC_DIR), $(SRCS))
 OBJS		= $(SRCS:.cpp=.o)
 OBJ			= $(addprefix $(OBJ_DIR), $(OBJS))
 

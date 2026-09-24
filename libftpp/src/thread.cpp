@@ -16,9 +16,8 @@ void Thread::start(){
 }
 
 void Thread::stop(){
-	if (!_thread.joinable())
-		return ;
-	_thread.join();
+	if (_thread.joinable())
+		_thread.join();
 }
 
 

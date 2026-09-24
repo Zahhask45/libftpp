@@ -37,16 +37,18 @@ void WorkerPool::addJob(const std::function<void()> &jobToExecute) {
 void WorkerPool::_startThread() {
   while (true) {
     std::function<void()> job;
-    std::unique_lock<std::mutex> lock(_queueMutex);
-    _condition.wait(lock,
-                    [&]() { return (_stopthat || _queue.empty() == false); });
     {
-      std::lock_guard<std::mutex> lock(_guard);
-      if (_stopthat == true) {
+      std::unique_lock<std::mutex> lock(_queueMutex);
+      _condition.wait(lock, [&]() { 
+        return (_stopthat || !_queue.empty());
+      });
+      
+      if (_stopthat && _queue.empty()) {
         return;
       }
+      
+      job = _queue.pop_front();
     }
-    job = _queue.pop_front();
     try {
       job();
     } catch (const std::exception &e) {

@@ -11,7 +11,7 @@
 class IJobs {
 public:
   virtual void addJob(const std::function<void()> &jobToExecute) = 0;
-  ~IJobs() {};
+  virtual ~IJobs() = default;
 };
 
 class WorkerPool : public IJobs {
