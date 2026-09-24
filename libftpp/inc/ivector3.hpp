@@ -11,7 +11,7 @@ struct IVector3{
 
 	IVector3(TType x, TType y, TType z);
 
-	float length();
+	float length() const;
 	IVector3<float> normalize();
 	float dot(IVector3& v2);
 	IVector3<TType> cross(IVector3<TType>& v2);

@@ -1,6 +1,5 @@
 #include "ivector2.hpp"
 
-
 template<typename TType>
 IVector2<TType>::IVector2(TType x, TType y){
 	this->x = x;
@@ -8,50 +7,47 @@ IVector2<TType>::IVector2(TType x, TType y){
 }
 
 template<typename TType>
-float IVector2<TType>::length(){
-	return (sqrt(x*x + y*y));
+float IVector2<TType>::length() const{
+	return (sqrt(static_cast<float>(x*x + y*y)));
 }
 
 template<typename TType>
 IVector2<float> IVector2<TType>::normalize(){
 	float len = this->length();
-	IVector2<float> norm(this->x / len, this->y / len);
-	return norm;
+	if (len == 0.0f)
+		return IVector2<float>(0.0f, 0.0f);
+	
+	return IVector2<float>(static_cast<float>(x / len), static_cast<float>(y / len));
 }
 
 template<typename TType>
 float IVector2<TType>::dot(IVector2<TType>& v2){
-	return (this->x * v2.x + this->y * v2.y);
+	return static_cast<float>(x * v2.x + y * v2.y);
 }
 
 template<typename TType>
 IVector2<TType> IVector2<TType>::cross(){
-	IVector2<TType> crossed(-this->y, this->x);
-	return crossed;
+	return IVector2<TType>(-y, x);
 }
 
 template<typename TType>
 IVector2<TType> IVector2<TType>::operator+(IVector2<TType>& v2){
-	IVector2<TType> addVec(this->x + v2.x, this->y + v2.y);
-	return addVec;
+	return IVector2<TType>(this->x + v2.x, this->y + v2.y);
 }
 
 template<typename TType>
 IVector2<TType> IVector2<TType>::operator-(IVector2<TType>& v2){
-	IVector2<TType> subVec(this->x - v2.x, this->y - v2.y);
-	return subVec;
+	return IVector2<TType>(this->x - v2.x, this->y - v2.y);
 }
 
 template<typename TType>
 IVector2<TType> IVector2<TType>::operator*(IVector2<TType>& v2){
-	IVector2<TType> mulVec(this->x * v2.x, this->y * v2.y);
-	return mulVec;
+	return IVector2<TType>(this->x * v2.x, this->y * v2.y);
 }
 
 template<typename TType>
 IVector2<TType> IVector2<TType>::operator/(IVector2<TType>& v2){
-	IVector2<TType> divVec(this->x / v2.x, this->y / v2.y);
-	return divVec;
+	return IVector2<TType>(this->x / v2.x, this->y / v2.y);
 }
 
 template<typename TType>
@@ -61,7 +57,7 @@ bool IVector2<TType>::operator==(IVector2<TType>& v2){
 
 template<typename TType>
 bool IVector2<TType>::operator!=(IVector2<TType>& v2){
-	return (this->x != v2.x && this->y != v2.y);
+	return !(*this == v2);
 }
 
 template struct IVector2<int>;

@@ -1,19 +1,38 @@
-# How to fix the mandatory part of libftpp
+# Mandatory-part repair guide
 
-This is the checklist I would use to repair the mandatory implementations in `libftpp` so they match the assignment and behave safely.
+This guide is based on `en.subject.pdf` and the current project files. It is
+written for manual editing: apply the fixes section by section, then run the
+validation commands at the end.
 
-## 1) Observer: do not store pointers to std::function
+The PDF requires:
 
-Problem:
-- In `inc/observer.hpp`, the code stores `const std::function<void()>*` in a map.
-- Those pointers point to temporary lambda objects and become invalid as soon as `subscribe()` returns.
-- This can crash or silently misbehave.
+- compilation with `c++ -Wall -Wextra -Werror` and at least C++11;
+- `libftpp.a`;
+- `inc/libftpp.hpp`;
+- the section headers and classes listed in the mandatory part;
+- no external libraries and no `printf`, `malloc`-family allocation, or
+  `free`;
+- independent headers with include guards.
 
-Correct design:
-- Store copies of the function objects in the container.
-- `std::function` is copyable and safe to store by value.
+The current Makefile builds successfully, but that does not instantiate every
+template. Always run the template smoke test in the validation section too.
 
-Fix:
+---
+
+## 1. Observer
+
+### Current problems
+
+`inc/observer.hpp` currently has three issues:
+
+1. `notify()` calls `event.find(event)`. `event` is the `TEvent` argument;
+   the map is named `events`.
+2. `std::vector<const std::function<void()>>` is invalid. A standard
+   container cannot have a `const` value type.
+3. The callbacks should be stored by value, not as pointers to the argument
+   passed to `subscribe()`.
+
+### Replace the implementation with
 
 ```cpp
 #ifndef OBSERVER_HPP
@@ -26,8 +45,9 @@ Fix:
 template<typename TEvent>
 class Observer {
 public:
-    void subscribe(const TEvent& event, const std::function<void()>& lambda) {
-        _events[event].push_back(lambda);
+    void subscribe(const TEvent& event,
+                   const std::function<void()>& callback) {
+        _events[event].push_back(callback);
     }
 
     void notify(const TEvent& event) {
@@ -35,10 +55,8 @@ public:
         if (it == _events.end())
             return;
 
-        for (auto& callback : it->second) {
-            if (callback)
-                callback();
-        }
+        for (const auto& callback : it->second)
+            callback();
     }
 
 private:
@@ -48,707 +66,863 @@ private:
 #endif
 ```
 
-Why this is better:
-- No dangling pointers.
-- No lifetime issues.
-- Easy to unsubscribe later if needed.
+`TEvent` must be usable as a key in `std::unordered_map`, which means it needs
+`operator==` and `std::hash<TEvent>`.
 
 ---
 
-## 2) StateMachine: fix ownership, transitions, and missing checks
+## 2. StateMachine
 
-Problem:
-- `StateMachine` stores raw `TState* _curstate` and deletes it manually.
-- The map uses `std::vector<const std::function<void()>*>` again, so same dangling pointer issue.
-- There is no clear validation when a state or transition has not been configured.
+### Current problems
 
-Better implementation:
-- Store `std::function<void()>` by value.
-- Keep current state in a value, not a pointer.
-- Validate state existence before `update()`/`transitionTo()`.
-- Use a proper transition key struct with both states.
-
-Example:
+`inc/state_machine.hpp` has the same invalid callback container as Observer:
 
 ```cpp
-#ifndef STATE_MACHINE_HPP
-#define STATE_MACHINE_HPP
-
-#include <functional>
-#include <stdexcept>
-#include <unordered_map>
-#include <vector>
-
-template<typename TState>
-class StateMachine {
-public:
-    struct TransitionKey {
-        TState from;
-        TState to;
-
-        bool operator==(const TransitionKey& other) const {
-            return from == other.from && to == other.to;
-        }
-    };
-
-    struct TransitionKeyHash {
-        std::size_t operator()(const TransitionKey& key) const {
-            std::size_t h1 = std::hash<TState>{}(key.from);
-            std::size_t h2 = std::hash<TState>{}(key.to);
-            return h1 ^ (h2 << 1);
-        }
-    };
-
-    void addState(const TState& state) {
-        _stateActions[state];
-        if (!_hasCurrentState)
-            _currentState = state, _hasCurrentState = true;
-    }
-
-    void addAction(const TState& state, const std::function<void()>& lambda) {
-        _stateActions[state].push_back(lambda);
-    }
-
-    void addTransition(const TState& startState,
-                       const TState& finalState,
-                       const std::function<void()>& lambda) {
-        _transitions[{startState, finalState}].push_back(lambda);
-    }
-
-    void transitionTo(const TState& state) {
-        if (!_hasCurrentState)
-            throw std::runtime_error("StateMachine: no current state");
-
-        auto it = _transitions.find({ _currentState, state });
-        if (it == _transitions.end())
-            throw std::invalid_argument("StateMachine: invalid transition");
-
-        _currentState = state;
-        for (const auto& callback : it->second) {
-            if (callback)
-                callback();
-        }
-    }
-
-    void update() {
-        if (!_hasCurrentState)
-            throw std::runtime_error("StateMachine: current state not set");
-
-        auto it = _stateActions.find(_currentState);
-        if (it == _stateActions.end())
-            throw std::runtime_error("StateMachine: state not found");
-
-        for (const auto& callback : it->second) {
-            if (callback)
-                callback();
-        }
-    }
-
-private:
-    TState _currentState{};
-    bool _hasCurrentState = false;
-    std::unordered_map<TState, std::vector<std::function<void()>>> _stateActions;
-    std::unordered_map<TransitionKey, std::vector<std::function<void()>>, TransitionKeyHash> _transitions;
-};
-
-#endif
+std::vector<const std::function<void()>>
 ```
 
-Important:
-- `std::hash<TState>` must exist for the type used as the state.
-- If your state type is custom, implement a custom hash or use `std::string`/`int`-like states.
+It also does this:
+
+```cpp
+_stateActions[state].push_back(&lambda);
+_transitions[{startState, finalState}].push_back(&lambda);
+```
+
+`lambda` is a reference to the function argument. Its address becomes invalid
+when `addAction()` or `addTransition()` returns.
+
+### Required changes
+
+Use callback values in both maps:
+
+```cpp
+std::unordered_map<
+    TState,
+    std::vector<std::function<void()>>
+> _stateActions;
+
+std::unordered_map<
+    TransitionKey,
+    std::vector<std::function<void()>>,
+    TransitionKeyHash
+> _transitions;
+```
+
+Then store copies:
+
+```cpp
+void addAction(const TState& state,
+               const std::function<void()>& callback) {
+    _stateActions[state].push_back(callback);
+}
+
+void addTransition(const TState& startState,
+                   const TState& finalState,
+                   const std::function<void()>& callback) {
+    _transitions[{startState, finalState}].push_back(callback);
+}
+```
+
+The current value-based current-state design is fine:
+
+```cpp
+TState _currentState{};
+bool _hasCurrentState = false;
+```
+
+Keep these checks:
+
+- `transitionTo()` must throw if no current state exists;
+- `transitionTo()` must throw if the requested transition is not registered;
+- `update()` must throw if no current state exists.
+
+When invoking callbacks, use:
+
+```cpp
+for (const auto& callback : it->second)
+    callback();
+```
+
+Do not use raw pointers and do not restore the old raw `_curstate` design.
 
 ---
 
-## 3) ThreadSafeQueue: protect every operation and `empty()`
+## 3. ThreadSafeQueue
 
-Problem:
-- `empty()` is not mutex-protected.
-- This can race with pushes/pops.
-- It is also a bad idea to expose mutability without locking.
+`inc/thread_safe_queue.hpp` is close to correct. Keep the mutex around every
+operation, including `empty()`:
 
-Correct version:
+```cpp
+bool empty() const {
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _queue.empty();
+}
+```
+
+Because `empty()` is `const`, the mutex must be declared `mutable`:
+
+```cpp
+mutable std::mutex _mutex;
+```
+
+Fix the include guard spelling. It should be specific and consistent:
 
 ```cpp
 #ifndef THREAD_SAFE_QUEUE_HPP
 #define THREAD_SAFE_QUEUE_HPP
-
-#include <deque>
-#include <mutex>
-#include <stdexcept>
-
-template<typename TType>
-class ThreadSafeQueue {
-public:
-    void push_back(const TType& value) {
-        std::lock_guard<std::mutex> lock(_mutex);
-        _queue.push_back(value);
-    }
-
-    void push_front(const TType& value) {
-        std::lock_guard<std::mutex> lock(_mutex);
-        _queue.push_front(value);
-    }
-
-    TType pop_back() {
-        std::lock_guard<std::mutex> lock(_mutex);
-        if (_queue.empty())
-            throw std::runtime_error("ThreadSafeQueue: empty queue");
-
-        TType value = _queue.back();
-        _queue.pop_back();
-        return value;
-    }
-
-    TType pop_front() {
-        std::lock_guard<std::mutex> lock(_mutex);
-        if (_queue.empty())
-            throw std::runtime_error("ThreadSafeQueue: empty queue");
-
-        TType value = _queue.front();
-        _queue.pop_front();
-        return value;
-    }
-
-    bool empty() const {
-        std::lock_guard<std::mutex> lock(_mutex);
-        return _queue.empty();
-    }
-
-private:
-    mutable std::mutex _mutex;
-    std::deque<TType> _queue;
-};
-
-#endif
 ```
 
-Note:
-- `empty()` is now synchronized.
-- All access is through the same mutex.
+The queue methods required by the PDF are:
+
+- `push_back`;
+- `push_front`;
+- `pop_back`;
+- `pop_front`.
+
+The pop methods must throw when the queue is empty. The current implementation
+does that.
 
 ---
 
-## 4) Thread: do not start or stop twice
+## 4. Thread
 
-Problem:
-- `Thread::start()` blindly starts a thread, even if already started.
-- `Thread::stop()` joins an unstarted thread.
-- `std::thread` is not copyable, and a default-constructed thread is valid but not running.
+The current `Thread` lifecycle checks are useful:
 
-Clean fix:
+- reject `start()` when the thread is already joinable;
+- make `stop()` harmless when the thread was never started;
+- join a started thread.
+
+Keep the implementation conceptually like this:
 
 ```cpp
-#ifndef THREAD_HPP
-#define THREAD_HPP
+void Thread::start() {
+    if (_thread.joinable())
+        throw std::runtime_error("Thread: already started");
+    if (!_func)
+        throw std::runtime_error("Thread: no function assigned");
 
-#include <functional>
-#include <string>
-#include <thread>
-#include <stdexcept>
+    _thread = std::thread(&Thread::run, this);
+}
 
-class Thread {
-public:
-    Thread(const std::string& name, std::function<void()> func)
-        : _name(name), _func(std::move(func)) {}
-
-    void start() {
-        if (_thread.joinable())
-            throw std::runtime_error("Thread: already started");
-        if (!_func)
-            throw std::runtime_error("Thread: no function assigned");
-
-        _thread = std::thread(&Thread::run, this);
-    }
-
-    void stop() {
-        if (!_thread.joinable())
-            return;
+void Thread::stop() {
+    if (_thread.joinable())
         _thread.join();
-    }
+}
 
-private:
-    void run() {
-        // optional: use threadSafeCout.setPrefix(_name);
-        _func();
-    }
-
-private:
-    std::string _name;
-    std::function<void()> _func;
-    std::thread _thread;
-};
-
-#endif
-```
-
-If you want the printed prefix behavior:
-
-```cpp
-void run() {
+void Thread::run() {
     threadSafeCout.setPrefix(_name);
     _func();
 }
 ```
 
+`src/thread.cpp` and `inc/thread.hpp` must use the same function name. If the
+header declares `run()`, do not leave a `_trueStart()` definition in the
+source.
+
+Add `<utility>` in the source if using `std::move`.
+
 ---
 
-## 5) Pool: keep shrink, but fix object lifetime
+## 5. Pool
 
-The subject says:
-- `Pool::Object` must provide access to a preallocated object.
-- When the object is released, call its destructor but do not deallocate memory.
+The PDF says that the pool must:
 
-Do **not** remove shrinking. Shrinking is valid if the pool removes only available objects and throws when a live `Pool::Object` would be invalidated.
+- allocate a number of reusable objects;
+- construct an acquired object with the arguments passed to `acquire()`;
+- destroy the object on release;
+- return the memory to the pool without deallocating it;
+- let `Pool::Object` handle acquisition and release.
 
-The real lifetime problem is using `std::unique_ptr<TType>` for objects that are also reconstructed with placement `new`. That constructs `TType` once during allocation, constructs another `TType` over the first one in `acquire()`, and can later destroy the same storage twice. Use untyped aligned storage for the slots instead.
+Do not remove shrinking. Shrinking is valid when only available slots are
+removed.
 
-This version supports both growth and shrinking:
+### Why raw storage is needed
+
+This combination is unsafe:
 
 ```cpp
-#ifndef POOL_HPP
-#define POOL_HPP
+std::make_unique<TType>();
+new (obj) TType(args...);
+```
 
-#include <cstddef>
-#include <memory>
-#include <new>
-#include <stdexcept>
-#include <type_traits>
+The first line constructs a live `TType`; the second constructs another object
+over it without first ending the original lifetime. A manually called
+destructor then conflicts with the `unique_ptr` owner.
+
+The current `inc/pool.hpp` uses a private aligned-storage `Slot`, which is a
+reasonable internal solution. Verify that it has all of these properties:
+
+1. `resize()` allocates slots, but does not construct `TType`.
+2. `acquire()` constructs `TType` exactly once with placement `new`.
+3. `Pool::Object::~Object()` calls `~TType()` and returns the slot.
+4. `Object` is move-only.
+5. Shrinking removes only entries from the available list.
+6. Shrinking checks that enough slots are available before changing anything.
+7. If construction throws, the slot is returned to the available list.
+
+Important ownership rule: the `Pool` must outlive all its `Pool::Object`
+instances.
+
+The object wrapper should have this shape:
+
+```cpp
+Object(const Object&) = delete;
+Object& operator=(const Object&) = delete;
+
+Object(Object&& other) noexcept;
+Object& operator=(Object&& other) noexcept;
+```
+
+Without move-only ownership, two wrappers could release the same slot.
+
+Do not make a `noexcept` release function call an operation that can allocate
+unless you accept the consequence. `std::vector::push_back()` can throw while
+returning a slot. For a simple project implementation, this is usually left as
+is, but do not claim it is unconditionally exception-safe.
+
+---
+
+## 6. DataBuffer
+
+`DataBuffer` provides the templated `<<` and `>>` operators required by the
+PDF. Keep the trivially-copyable restriction for primitive data:
+
+```cpp
+std::enable_if_t<std::is_trivially_copyable_v<TType>, void>
+```
+
+The string overload must serialize a length followed by the bytes.
+
+Check these details manually:
+
+- `deserialize()` must throw `NotEnoughBytesException` before reading beyond
+  the buffer;
+- string length must be validated before assigning the string;
+- serialization must not use forbidden C allocation functions;
+- the header must compile independently.
+
+For stronger behavior, deserialize a string length without permanently
+removing it until the complete string payload has been validated. Otherwise a
+failed string read can leave the buffer partially consumed.
+
+A minimal safe pattern is:
+
+```cpp
+void deserialize(std::string& value) {
+    size_t size;
+    if (buffer.size() < sizeof(size))
+        throw NotEnoughBytesException();
+
+    std::memcpy(&size, buffer.data(), sizeof(size));
+    if (buffer.size() - sizeof(size) < size)
+        throw NotEnoughBytesException();
+
+    const char* bytes = reinterpret_cast<const char*>(
+        buffer.data() + sizeof(size)
+    );
+    value.assign(bytes, size);
+    buffer.erase(buffer.begin(),
+                 buffer.begin() + sizeof(size) + size);
+}
+```
+
+---
+
+## 7. Memento
+
+The PDF requires:
+
+- `Snapshot save()`;
+- `void load(const Snapshot&)`;
+- private save/load hooks implemented by the inheriting class.
+
+The current `Memento` design is suitable:
+
+```cpp
+Snapshot Memento::save() const {
+    Snapshot snapshot;
+    _saveToSnapshot(snapshot);
+    return snapshot;
+}
+
+void Memento::load(const Snapshot& snapshot) {
+    Snapshot copy = snapshot;
+    _loadFromSnapshot(copy);
+}
+```
+
+The copy in `load()` is intentional because deserialization consumes bytes
+from `DataBuffer`.
+
+An inheriting class should implement:
+
+```cpp
+void _saveToSnapshot(Snapshot& snapshot) const override;
+void _loadFromSnapshot(Snapshot& snapshot) override;
+```
+
+Do not define a destructor in `memento.cpp` if the header already says:
+
+```cpp
+virtual ~Memento() = default;
+```
+
+That creates a duplicate definition.
+
+---
+
+## 8. Singleton
+
+The current singleton structure satisfies the required operations:
+
+- `instance()` returns the object or throws if not instantiated;
+- `instantiate()` forwards constructor arguments;
+- a second instantiation throws.
+
+Add the direct dependency:
+
+```cpp
 #include <utility>
-#include <vector>
+```
 
+because the implementation uses `std::forward`.
+
+The target class must declare the singleton as a friend if its constructor is
+private or protected, as shown in the subject example.
+
+---
+
+## 9. ThreadSafeIOStream
+
+The PDF requires:
+
+- `<<` and `>>`;
+- `setPrefix()`;
+- `prompt()`;
+- thread-safe output;
+- a thread-local stream object.
+
+The current `thread_local ThreadSafeIOStream threadSafeCout` gives each thread
+its own buffer and prefix, but a mutex stored as a normal member also gives
+each thread a different mutex. That does **not** synchronize output between
+threads.
+
+Use:
+
+```cpp
+class ThreadSafeIOStream {
+private:
+    static std::mutex _outputMutex;
+    std::string _prefix;
+    std::ostringstream _buffer;
+};
+```
+
+Define it once in `src/thread_safe_iostream.cpp`:
+
+```cpp
+std::mutex ThreadSafeIOStream::_outputMutex;
+thread_local ThreadSafeIOStream threadSafeCout;
+```
+
+The templated `operator<<` can append to the current thread's private buffer.
+The manipulator overload must lock the shared mutex and emit one complete
+buffer:
+
+```cpp
+ThreadSafeIOStream&
+ThreadSafeIOStream::operator<<(
+    std::ostream& (*manipulator)(std::ostream&)) {
+    std::lock_guard<std::mutex> lock(_outputMutex);
+    std::cout << _prefix << _buffer.str();
+    manipulator(std::cout);
+    _buffer.str("");
+    _buffer.clear();
+    return *this;
+}
+```
+
+Also protect `setPrefix()` and input operations with the same shared mutex.
+
+---
+
+## 10. WorkerPool
+
+The PDF requires an `IJobs` interface and a worker pool with `addJob()`.
+
+Fix the interface destructor:
+
+```cpp
+class IJobs {
+public:
+    virtual ~IJobs() = default;
+    virtual void addJob(const std::function<void()>& job) = 0;
+};
+```
+
+The destructor must be virtual because `WorkerPool` is used through an
+interface.
+
+In the worker loop:
+
+- wait on the condition variable while the queue is empty and the pool is not
+  stopping;
+- when stopping, decide whether queued jobs should be drained or discarded;
+- join every worker in the destructor;
+- do not hold a mutex while executing user code.
+
+The current worker loop holds `_queueMutex` while calling `job()`. Change the
+scope so the job is popped under the lock, then executed after the lock is
+released. Holding the queue mutex while user code runs blocks producers and
+other workers.
+
+Use one synchronization strategy consistently. The queue has its own mutex,
+while the worker pool has `_queueMutex`; avoid checking the queue under one
+lock and modifying it under another without a deliberate design.
+
+---
+
+## 11. PersistentWorker
+
+The PDF requires named tasks that repeatedly execute until removed.
+
+### Current critical bug
+
+`addTask()` currently captures function parameters by reference:
+
+```cpp
+std::thread([&]() { ... name ... jobToExecute ... });
+```
+
+`name` and `jobToExecute` are parameters of `addTask()`. The thread can outlive
+the function, so those references can dangle.
+
+Capture them by value:
+
+```cpp
+std::thread([this, name, jobToExecute]() {
+    while (true) {
+        {
+            std::lock_guard<std::mutex> lock(_guard);
+            auto it = _toRemove.find(name);
+            if (it != _toRemove.end() && it->second)
+                return;
+        }
+
+        jobToExecute();
+    }
+})
+```
+
+### Other required corrections
+
+- Lock access to `_tasks` and `_toRemove` consistently.
+- Reject duplicate task names instead of silently failing `insert()`.
+- `removeTask()` must detect an unknown name; do not use `_tasks[name]`, since
+  that creates a new entry.
+- Ensure the removal flag exists before the thread starts.
+- Do not hold `_guard` while executing user code.
+- Catching exceptions from user tasks is optional, but an uncaught exception
+  escaping a thread calls `std::terminate`; decide and document the policy.
+
+---
+
+## 12. Message
+
+The PDF requires:
+
+- `Message(int type)`;
+- templated serialization operators;
+- `type()`;
+- detection of the message type by clients and servers.
+
+Keep `type()` const:
+
+```cpp
+Type type() const;
+```
+
+and define it as:
+
+```cpp
+Message::Type Message::type() const {
+    return _type;
+}
+```
+
+The `operator>>` declaration should return `Message&`, not `const Message&`,
+because deserialization consumes data from the message buffer:
+
+```cpp
 template<typename TType>
-class Pool {
-private:
-    struct Slot {
-        typename std::aligned_storage<sizeof(TType), alignof(TType)>::type storage;
-        bool constructed = false;
-
-        TType* object() {
-            return reinterpret_cast<TType*>(&storage);
-        }
-    };
-
-public:
-    class Object {
-        friend class Pool;
-
-        Object(Pool* pool, Slot* slot)
-            : _pool(pool), _slot(slot) {}
-
-    public:
-        Object(Object&& other) noexcept
-            : _pool(other._pool), _slot(other._slot) {
-            other._pool = nullptr;
-            other._slot = nullptr;
-        }
-
-        Object(const Object&) = delete;
-        Object& operator=(const Object&) = delete;
-
-        ~Object() {
-            if (_pool && _slot) {
-                _slot->object()->~TType();
-                _slot->constructed = false;
-                _pool->_available.push_back(_slot);
-            }
-        }
-
-        TType* operator->() {
-            return _slot->object();
-        }
-
-        const TType* operator->() const {
-            return _slot->object();
-        }
-
-    private:
-        Pool* _pool;
-        Slot* _slot;
-    };
-
-    void resize(std::size_t count) {
-        while (_slots.size() < count) {
-            auto slot = std::make_unique<Slot>();
-            _available.push_back(slot.get());
-            _slots.push_back(std::move(slot));
-        }
-
-        while (_slots.size() > count) {
-            if (_available.empty())
-                throw std::runtime_error(
-                    "Pool: cannot shrink while all remaining objects are acquired");
-
-            Slot* removable = _available.back();
-            _available.pop_back();
-
-            for (auto it = _slots.begin(); it != _slots.end(); ++it) {
-                if (it->get() == removable) {
-                    _slots.erase(it);
-                    break;
-                }
-            }
-        }
-    }
-
-    template<typename... TArgs>
-    Object acquire(TArgs&&... args) {
-        if (_available.empty())
-            throw std::runtime_error("Pool: no available object");
-
-        Slot* slot = _available.back();
-        _available.pop_back();
-        new (&slot->storage) TType(std::forward<TArgs>(args)...);
-        slot->constructed = true;
-        return Object(this, slot);
-    }
-
-private:
-    std::vector<std::unique_ptr<Slot>> _slots;
-    std::vector<Slot*> _available;
-};
-
-#endif
-```
-
-Notes:
-- The pool must outlive every `Pool::Object` acquired from it.
-- `Object` must be move-only; otherwise two wrappers could destroy and release one slot twice.
-- Growth adds unconstructed storage. `acquire()` is the only place that constructs `TType`.
-- Shrinking removes only available slots. It must never invalidate an acquired object.
-
----
-
-## 6) Memento: store a real snapshot and keep the contract clear
-
-Problem:
-- The current `Memento` is only a wrapper around `DataBuffer`, but the actual logic is vague.
-- It should be easy to save and restore state using a snapshot container.
-
-Recommended design:
-- In the class that should save itself, define `_saveToSnapshot` and `_loadFromSnapshot`.
-- Use `DataBuffer` serialization for the data you want to preserve.
-
-Example:
-
-```cpp
-#ifndef MEMENTO_HPP
-#define MEMENTO_HPP
-
-#include "data_buffer.hpp"
-
-class Memento {
-public:
-    using Snapshot = DataBuffer;
-
-    virtual ~Memento() = default;
-
-    Snapshot save() const {
-        Snapshot snapshot;
-        _saveToSnapshot(snapshot);
-        return snapshot;
-    }
-
-    void load(const Snapshot& snapshot) {
-        Snapshot copy = snapshot;
-        _loadFromSnapshot(copy);
-    }
-
-private:
-    virtual void _saveToSnapshot(Snapshot& snapshot) const = 0;
-    virtual void _loadFromSnapshot(Snapshot& snapshot) = 0;
-};
-
-#endif
-```
-
-Example class using it:
-
-```cpp
-class Player : public Memento {
-private:
-    int _hp = 100;
-    int _x = 0;
-    int _y = 0;
-
-    void _saveToSnapshot(Snapshot& snapshot) const override {
-        snapshot << _hp << _x << _y;
-    }
-
-    void _loadFromSnapshot(Snapshot& snapshot) override {
-        snapshot >> _hp >> _x >> _y;
-    }
-};
-```
-
-Why this is correct:
-- The snapshot is explicit.
-- Save/load is easy to reason about.
-- The object decides what is restored.
-
----
-
-## 7) Client and Server networking: align with the PDF contract
-
-The assignment expects callback signatures like:
-
-```cpp
-void defineAction(const Message::Type& messageType,
-                  const std::function<void(const Message& msg)>& action);
-```
-
-Your implementation uses non-const references, which is inconsistent with the required API, and the behavior is harder to reason about.
-
-Fix the function signatures to match the subject:
-
-```cpp
-using Action = std::function<void(const Message&)>;
-
-void defineAction(const Message::Type& messageType, const Action& action);
-```
-
-Then update the logic:
-
-```cpp
-void Client::update() {
-    if (!_isConnected)
-        throw NoConnectException();
-
-    std::vector<Message> messages;
-    std::unordered_map<Message::Type, Action> actions;
-
-    {
-        std::lock_guard<std::mutex> lock(_mtx);
-        messages = std::move(_msgs);
-        actions = _actions;
-    }
-
-    for (const auto& msg : messages) {
-        auto it = actions.find(msg.type());
-        if (it != actions.end() && it->second)
-            it->second(msg);
-    }
+friend Message& operator>>(Message& message, TType& value) {
+    message._data >> value;
+    return message;
 }
 ```
 
-The same logic applies on the server side:
+The serialized representation must contain the type and the payload. Check
+that `deserialize()` rejects data shorter than the type field.
+
+---
+
+## 13. Client and Server API
+
+The PDF expects client actions to receive a read-only message:
 
 ```cpp
-using Action = std::function<void(long long, const Message&)>;
+std::function<void(const Message&)>
 ```
 
-And in `update()`:
+The server action should receive a client ID and a read-only message:
 
 ```cpp
-for (const auto& [clientID, msg] : procList) {
-    auto it = actions.find(msg.type());
+std::function<void(long long&, const Message&)>
+```
+
+Keep the declarations, definitions, and `update()` loops consistent. When
+calling a server callback that expects `long long&`, do not use a const
+structured binding:
+
+```cpp
+for (auto& [clientID, message] : messages) {
+    auto it = actions.find(message.type());
     if (it != actions.end() && it->second)
-        it->second(clientID, msg);
+        it->second(clientID, message);
 }
 ```
 
-This keeps the semantics aligned with the PDF and avoids turning `Message` into a mutable object when it should be read-only.
+The client loop can use const messages:
+
+```cpp
+for (const auto& message : messages) {
+    auto it = actions.find(message.type());
+    if (it != actions.end() && it->second)
+        it->second(message);
+}
+```
 
 ---
 
-## 8) IVector2 / IVector3: fix operators, normalization, and const correctness
+## 14. Network I/O correctness
 
-Your vector code mostly compiles, but there are several important correctness issues.
+The current network code compiles, but these are important runtime issues.
 
-### Problems
-- `operator!=` uses `&&` instead of `||`.
-- Methods take non-const references when they should be const references.
-- `normalize()` can divide by zero.
-- `dot()` and `cross()` should be const-correct.
+### 14.1 Do not assume one send transmits everything
 
-### Correct version for `IVector2`
+TCP `send()` may write fewer bytes than requested. Add a helper that loops:
 
 ```cpp
-#ifndef IVECTOR2_HPP
-#define IVECTOR2_HPP
+void sendAll(int socket, const char* data, size_t size) {
+    size_t sent = 0;
+    while (sent < size) {
+        ssize_t result = ::send(socket, data + sent, size - sent, 0);
+        if (result <= 0)
+            throw SendingFailedException();
+        sent += static_cast<size_t>(result);
+    }
+}
+```
 
-#include <cmath>
+Use it for both the size header and the serialized message.
 
+### 14.2 Read the size header through bytes
+
+Do not use:
+
+```cpp
+&clientBuf.size + clientBuf.totalBytes
+```
+
+That performs pointer arithmetic in units of `sizeof(size_t)`, not bytes.
+Use:
+
+```cpp
+char* sizeBytes =
+    reinterpret_cast<char*>(&clientBuf.size) + clientBuf.totalBytes;
+```
+
+Then pass `sizeBytes` to `recv()`. Apply the same correction to the server.
+
+### 14.3 Handle zero-length payloads
+
+If a serialized message can have a zero-length payload, do not call `recv()`
+with a zero length and then interpret the result as a disconnect. Transition
+directly to message processing when the declared payload size is zero.
+
+### 14.4 Wake receiver threads during shutdown
+
+Both client and server receiver threads can block in `select()`. Setting an
+atomic flag alone does not wake `select()`.
+
+Before joining:
+
+1. call `shutdown(socket, SHUT_RDWR)` where appropriate;
+2. close the socket or use a dedicated wake-up mechanism;
+3. set the running flag to false;
+4. join the receiver;
+5. clear the socket descriptor.
+
+The exact order must avoid another thread using a closed descriptor. Keep all
+socket state transitions synchronized.
+
+### 14.5 Do not silently discard failed sends
+
+The server currently catches send exceptions and continues while removing the
+message from the queue. This loses messages without reporting the error.
+
+At minimum, keep the message queued when a partial/failed send is retryable.
+For a simple implementation, report the error and disconnect the affected
+client rather than silently pretending the send succeeded.
+
+---
+
+## 15. IVector2 and IVector3
+
+The PDF requires templated vector structs with arithmetic, comparisons,
+length, normalization, dot product, and cross product.
+
+### Current issues
+
+- Methods take non-const references.
+- Methods are not consistently marked `const`.
+- Definitions are in `.cpp` files, so only explicitly instantiated `int` and
+  `float` types work. Other template types will fail to link.
+- Division by a zero component is not checked.
+
+### Recommended declaration pattern
+
+For `IVector2`:
+
+```cpp
 template<typename TType>
 struct IVector2 {
     TType x;
     TType y;
 
-    IVector2(TType x = 0, TType y = 0) : x(x), y(y) {}
+    IVector2(TType x = 0, TType y = 0);
 
-    float length() const {
-        return std::sqrt(static_cast<float>(x * x + y * y));
-    }
+    float length() const;
+    IVector2<float> normalize() const;
+    float dot(const IVector2& other) const;
+    IVector2 cross() const;
 
-    IVector2<float> normalize() const {
-        float len = length();
-        if (len == 0.0f)
-            return IVector2<float>(0.0f, 0.0f);
-        return IVector2<float>(static_cast<float>(x) / len,
-                               static_cast<float>(y) / len);
-    }
-
-    float dot(const IVector2& other) const {
-        return static_cast<float>(x * other.x + y * other.y);
-    }
-
-    IVector2 cross() const {
-        return IVector2(-y, x);
-    }
-
-    IVector2 operator+(const IVector2& other) const {
-        return IVector2(x + other.x, y + other.y);
-    }
-
-    IVector2 operator-(const IVector2& other) const {
-        return IVector2(x - other.x, y - other.y);
-    }
-
-    IVector2 operator*(const IVector2& other) const {
-        return IVector2(x * other.x, y * other.y);
-    }
-
-    IVector2 operator/(const IVector2& other) const {
-        return IVector2(x / other.x, y / other.y);
-    }
-
-    bool operator==(const IVector2& other) const {
-        return x == other.x && y == other.y;
-    }
-
-    bool operator!=(const IVector2& other) const {
-        return !(*this == other);
-    }
+    IVector2 operator+(const IVector2& other) const;
+    IVector2 operator-(const IVector2& other) const;
+    IVector2 operator*(const IVector2& other) const;
+    IVector2 operator/(const IVector2& other) const;
+    bool operator==(const IVector2& other) const;
+    bool operator!=(const IVector2& other) const;
 };
-
-#endif
 ```
 
-And `IVector3` follows the same pattern.
+Apply the corresponding pattern to `IVector3`, including `cross(const
+IVector3& other) const`.
 
----
-
-## 9) ThreadSafeIOStream: fix the prefix logic to be thread-local and safe
-
-Your `ThreadSafeIOStream` class is near-correct but the current implementation does not guarantee correct output order under concurrency.
-
-The simplest good fix:
-- Keep a mutex around the whole output operation.
-- Keep a per-thread prefix value.
-- Print the buffer in one atomic chunk.
-
-Example:
+Fix `normalize()` for zero length. Returning a zero vector is one reasonable
+policy:
 
 ```cpp
-#ifndef THREAD_SAFE_IOSTREAM_HPP
-#define THREAD_SAFE_IOSTREAM_HPP
-
-#include <iostream>
-#include <mutex>
-#include <sstream>
-#include <string>
-
-class ThreadSafeIOStream {
-public:
-    void setPrefix(const std::string& prefix) {
-        std::lock_guard<std::mutex> lock(_mutex);
-        _prefix = prefix;
-    }
-
-    template<typename T>
-    ThreadSafeIOStream& operator<<(const T& value) {
-        std::lock_guard<std::mutex> lock(_mutex);
-        _buffer << value;
-        return *this;
-    }
-
-    ThreadSafeIOStream& operator<<(std::ostream& (*manip)(std::ostream&)) {
-        std::lock_guard<std::mutex> lock(_mutex);
-        std::cout << _prefix << _buffer.str();
-        manip(std::cout);
-        _buffer.str("");
-        _buffer.clear();
-        return *this;
-    }
-
-    template<typename T>
-    void prompt(const std::string& question, T& dest) {
-        std::lock_guard<std::mutex> lock(_mutex);
-        std::cout << _prefix << question;
-        std::cin >> dest;
-    }
-
-private:
-    std::mutex _mutex;
-    std::string _prefix;
-    std::ostringstream _buffer;
-};
-
-extern thread_local ThreadSafeIOStream threadSafeCout;
-
-#endif
+if (len == 0.0f)
+    return IVector2<float>(0.0f, 0.0f);
 ```
 
-This makes the prefix and output line operations coherent.
+For `operator!=`, use:
+
+```cpp
+return !(*this == other);
+```
+
+### Template placement
+
+The normal solution is to put template declarations and definitions in the
+header. If you keep definitions in `.cpp`, you are intentionally supporting
+only the explicit instantiations at the bottom:
+
+```cpp
+template struct IVector2<int>;
+template struct IVector2<float>;
+```
+
+That is less general than the templated API promised by the subject.
 
 ---
 
-## 10) Quick repair list (do these first)
+## 16. Random2DCoordinateGenerator
 
-If you want the fastest path to a working mandatory submission, fix these in order:
+The PDF requires that the same seed and coordinates always produce the same
+result, and that changing either changes the result.
 
-1. Observer
-2. StateMachine
-3. ThreadSafeQueue
-4. Thread
-5. Vector operators / normalization
-6. Client / Server callback API
-7. Memento contract
-8. ThreadSafeIOStream prefix logic
-9. Pool lifetime rules
+The current use of a local PRNG seeded from `{seed, x, y}` satisfies the
+determinism requirement. Keep the seed independent from the generator's
+mutable random state.
+
+Add `const` where appropriate:
+
+```cpp
+long long seed() const;
+long long operator()(const long long& x,
+                     const long long& y) const;
+```
+
+If you change the declarations, update the definitions too.
 
 ---
 
-## 11) How to validate after fixing
+## 17. PerlinNoise2D
 
-Run:
+The mandatory API requires a `sample(x, y)` function. The current class also
+provides `operator()`, which is fine.
+
+Check:
+
+- the permutation table is initialized before `sample()`;
+- indices are masked safely for negative coordinates;
+- the result is deterministic for one `PerlinNoise2D` instance;
+- no forbidden allocation functions are used.
+
+The current constructor uses `std::rand()` and the current time, so separate
+instances are not deterministic relative to each other. If deterministic
+reproducibility is desired, add a seed constructor or use a local
+`std::mt19937` with an explicit seed. This is an improvement, not a separate
+PDF method requirement.
+
+---
+
+## 18. Header and Makefile checks
+
+Every header must compile independently. Test each header with:
 
 ```bash
-make clean
+for header in inc/*.hpp; do
+    printf '#include "%s"\nint main() {}\n' "$(basename "$header")" \
+        | c++ -x c++ -std=c++17 -Wall -Wextra -Werror -pedantic \
+            -I inc -fsyntax-only -
+done
+```
+
+The Makefile currently builds the library, but this line is misspelled and
+unused:
+
+```make
+SRC = $(addpredix $(SRC_DIR), $(SRCS))
+```
+
+Either remove `SRC` because the pattern rule already uses `SRCS`, or correct
+it to:
+
+```make
+SRC = $(addprefix $(SRC_DIR), $(SRCS))
+```
+
+Keep:
+
+```make
+CXXFLAGS = -Wall -Wextra -Werror -pedantic -std=c++17
+```
+
+C++17 is allowed because the subject requires C++11 or later.
+
+---
+
+## 19. Validation procedure
+
+### Build the archive
+
+```bash
+make fclean
 make
 ```
 
-Then compile a tiny test to check the main behaviors:
+Expected result:
+
+```text
+libftpp.a
+```
+
+### Instantiate template APIs
+
+Create a temporary test outside the repository:
 
 ```cpp
 #include "libftpp.hpp"
 
 int main() {
     Observer<int> observer;
-    observer.subscribe(42, [](){ std::cout << "event 42\n"; });
-    observer.notify(42);
+    observer.subscribe(1, [] {});
+    observer.notify(1);
 
     StateMachine<int> machine;
     machine.addState(0);
     machine.addState(1);
-    machine.addTransition(0, 1, [](){ std::cout << "transition\n"; });
+    machine.addAction(0, [] {});
+    machine.addTransition(0, 1, [] {});
     machine.transitionTo(1);
 
-    ThreadSafeQueue<int> q;
-    q.push_back(3);
-    std::cout << q.pop_front() << "\n";
-
-    IVector2<int> v(3, 4);
-    std::cout << v.length() << "\n";
+    ThreadSafeQueue<int> queue;
+    queue.push_back(3);
+    return queue.pop_front() != 3;
 }
 ```
 
-If it compiles and prints sensible output, you are very close to a correct mandatory submission.
+Compile it against the archive:
+
+```bash
+c++ -std=c++17 -Wall -Wextra -Werror -pedantic \
+    -I inc mandatory_smoke.cpp libftpp.a -pthread -o mandatory_smoke
+./mandatory_smoke
+```
+
+This catches template errors that `make` alone does not catch.
+
+### Pool behavior
+
+Test all of these:
+
+1. `resize(2)` followed by two successful acquisitions.
+2. A third acquisition throws.
+3. Releasing an object makes its slot available again.
+4. Shrinking removes only available slots.
+5. Shrinking below the number of acquired objects throws without invalidating
+   them.
+6. A type without a default constructor can be acquired with constructor
+   arguments.
+7. A constructor that throws returns the slot to the pool.
+
+### Thread and task behavior
+
+Test:
+
+- starting a `Thread` twice;
+- stopping a `Thread` before starting it;
+- adding/removing a persistent task;
+- destroying `PersistentWorker` while tasks are running;
+- destroying `WorkerPool` while jobs are queued.
+
+### Network behavior
+
+Test:
+
+- multiple messages in one connection;
+- messages larger than one `send()`/`recv()` operation;
+- client/server shutdown while idle;
+- disconnect during an active receive;
+- sending to an unknown client;
+- failed sends.
 
 ---
 
-## Final note
+## Recommended order
 
-The project is not “totally broken”, but several mandatory pieces are not safe or spec-compliant. The biggest issues are the lifetime of callback storage and the state/transition logic.
+1. Fix Observer so the umbrella header can instantiate it.
+2. Fix StateMachine callback storage.
+3. Fix PersistentWorker captures and task-map locking.
+4. Fix ThreadSafeIOStream's shared mutex.
+5. Fix WorkerPool locking and virtual destruction.
+6. Fix network byte offsets, full send/receive loops, and shutdown.
+7. Fix vector const-correctness and template placement.
+8. Review DataBuffer failure behavior.
+9. Run the independent-header and smoke tests.
 
-Fixing those first will make the library behave much closer to the assignment requirements.
+The Pool implementation can remain with aligned storage and shrinking; it is
+not necessary to remove the shrink feature.

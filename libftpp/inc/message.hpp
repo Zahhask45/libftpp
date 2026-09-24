@@ -7,7 +7,7 @@
 class Message {
   public:
     using Type = int;
-    Type type();
+    Type type() const;
 
     explicit Message(Type type);
 

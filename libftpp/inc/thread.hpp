@@ -11,7 +11,7 @@ class Thread{
 		void start();
 		void stop();
 	private:
-		static void run(const std::string& name, const std::function<void()> &func);
+		void run();
 	private:
 		std::string _name;
 		std::function<void()> _func;

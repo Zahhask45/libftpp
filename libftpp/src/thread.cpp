@@ -1,4 +1,5 @@
 #include "thread.hpp"
+#include "thread_safe_iostream.hpp"
 #include <stdexcept>
 
 
@@ -21,7 +22,7 @@ void Thread::stop(){
 }
 
 
-void Thread::_trueStart(const std::string& name, const std::function<void()> &func){
-	threadSafeCout.setPrefix(name);
+void Thread::run(){
+	threadSafeCout.setPrefix(_name);
 	_func();
 }

@@ -4,14 +4,14 @@
 #include <iostream>
 #include <mutex>
 #include <sstream>
-#include <thread>
+#include <string>
 
 class ThreadSafeIOStream {
 public:
   void setPrefix(const std::string &prefix);
 
-  template <typename T> ThreadSafeIOStream &operator<<(const T &p_prefix) {
-    _buffer << p_prefix;
+  template <typename T> ThreadSafeIOStream &operator<<(const T &value) {
+    _buffer << value;
     return (*this);
   };
 
@@ -20,7 +20,7 @@ public:
 
   template <typename T> ThreadSafeIOStream &operator>>(T &obj) {
     const std::lock_guard<std::mutex> lock(_mutex);
-    std::cout << _thread_prefix;
+    std::cout << _prefix;
 
     std::cin >> obj;
     return (*this);
@@ -28,15 +28,14 @@ public:
 
   template <typename T> void prompt(const std::string &question, T &dest) {
     const std::lock_guard<std::mutex> lock(_mutex);
-    std::cout << _thread_prefix;
+    std::cout << _prefix << question;
 
-    std::cout << question;
     std::cin >> dest;
   };
 
 private:
-  static std::mutex _mutex;
-  std::string _thread_prefix;
+  std::mutex _mutex;
+  std::string _prefix;
   std::ostringstream _buffer;
 };
 

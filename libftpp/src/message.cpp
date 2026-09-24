@@ -3,7 +3,7 @@
 Message::Message(Type type)
     : _type(type){}
 
-Message::Type Message::type(){
+Message::Type Message::type() const{
   return _type;
 }
 

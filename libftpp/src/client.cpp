@@ -109,24 +109,24 @@ void Client::update(){
 	if (!_isConnected)
 		throw NoConnectException();
 
-	if (_shouldEnd){
-		disconnect();
-		throw NoConnectException();
-	}
+	// if (_shouldEnd){
+	// 	disconnect();
+	// 	throw NoConnectException();
+	// }
 
-	std::vector<Message> procList;
-	std::unordered_map<Message::Type, Action> actionList;
+	std::vector<Message> messages;
+	std::unordered_map<Message::Type, Action> actions;
 
 	{
 		std::lock_guard<std::mutex> lock(_mtx);
-		procList.swap(_msgs);
-		actionList = _actions;
+		messages = std::move(_msgs);
+		actions = _actions;
 	}
 
-	for (Message& msg : procList){
-		auto it = actionList.find(msg.type());
+	for (const auto &msg : messages){
+		auto it = actions.find(msg.type());
 
-		if (it != actionList.end() && it->second)
+		if (it != actions.end() && it->second)
 			it->second(msg);
 	}
 }

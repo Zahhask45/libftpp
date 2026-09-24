@@ -20,7 +20,7 @@
 class Server{
 	public:
 		using ClientID = long long;
-		using Action = std::function<void(ClientID& clientID, Message& msg)>;
+		using Action = std::function<void(ClientID& clientID, const Message& msg)>;
 
 		Server();
 		~Server();

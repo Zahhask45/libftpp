@@ -8,15 +8,16 @@ IVector3<TType>::IVector3(TType x, TType y, TType z){
 }
 
 template<typename TType>
-float IVector3<TType>::length(){
-	return (sqrt(x*x + y*y + z*z));
+float IVector3<TType>::length() const{
+	return (sqrt(static_cast<float>(x*x + y*y + z*z)));
 }
 
 template<typename TType>
 IVector3<float> IVector3<TType>::normalize(){
 	float len = this->length();
-	IVector3<float> norm(this->x / len, this->y / len, this->z / len);
-	return norm;
+	if (len == 0.0f)
+		return IVector3<float>(0.0f, 0.0f, 0.0f);
+	return IVector3<float>(static_cast<float>(x) / len, static_cast<float>(y) / len, static_cast<float>(z) / len);
 }
 
 template<typename TType>
@@ -66,7 +67,7 @@ bool IVector3<TType>::operator==(IVector3<TType>& v2){
 
 template<typename TType>
 bool IVector3<TType>::operator!=(IVector3<TType>& v2){
-	return (this->x != v2.x && this->y != v2.y && this->z != v2.z);
+	return !(*this == v2);
 }
 
 template struct IVector3<int>;

@@ -1,104 +1,158 @@
 #ifndef POOL_HPP
 #define POOL_HPP
 
-#include <vector>
+#include <cstddef>
 #include <memory>
+#include <new>
 #include <stdexcept>
-#include <algorithm>
-
+#include <utility>
+#include <vector>
 
 template<typename TType>
-class Pool{
-	public:
-		// nested class
-		class Object{
-			private:
-				Pool* _pool;
-				TType* _object;
+class Pool {
+private:
+    struct Slot {
+        alignas(TType) unsigned char storage[sizeof(TType)];
 
-				
-			public:
-				Object(Pool* pool, TType* object): _pool(pool), _object(object){}
-				
-				~Object(){
-					if (_object && _pool){
-						_object->~TType();
-						_pool->release(_object);
-					}
-				}
-				
-				TType* operator->(){
-					return _object;
-				}
-				
-				const TType* operator->() const{
-					return _object;
-				};
-					
-		};
+        TType* object() {
+            return std::launder(reinterpret_cast<TType*>(storage));
+        }
 
+        const TType* object() const {
+            return std::launder(reinterpret_cast<const TType*>(storage));
+        }
+    };
 
-	private:
-		std::vector<std::unique_ptr<TType>> _allocObj;
-		std::vector<TType*> _availObj;
-		size_t _total = 0;
+public:
+    class Object {
+        friend class Pool;
 
-	public:
-		void resize(const size_t& count){
-			while (count > _allocObj){
-				// grow size
-				size_t objToAlloc = numberOfObjectsStored - _total;
+    private:
+        Object(Pool* pool, Slot* slot)
+            : _pool(pool), _slot(slot) {}
 
-				while (objToAlloc > 0){
-					auto newObj = std::make_unique<TType>();
+    public:
+        Object(Object&& other) noexcept
+            : _pool(other._pool), _slot(other._slot) {
+            other._pool = nullptr;
+            other._slot = nullptr;
+        }
 
-					_availObj.push_back(newObj.get());
-					_allocObj.push_back(std::move(newObj));
+        Object& operator=(Object&& other) noexcept {
+            if (this == &other)
+                return *this;
 
-					_total++;
-					objToAlloc--;
-				}
-			}else if(numberOfObjectsStored < _total){
-				// shrink size
-				size_t objToRem = _total - numberOfObjectsStored;
+            release();
+            _pool = other._pool;
+            _slot = other._slot;
+            other._pool = nullptr;
+            other._slot = nullptr;
+            return *this;
+        }
 
-				while (objToRem > 0 && !_allocObj.empty()){
-					if (_availObj.empty())
-						throw NoAvailableObjToRemoveException();
+        Object(const Object&) = delete;
+        Object& operator=(const Object&) = delete;
 
-					TType *obj = _availObj.back();
-					_availObj.pop_back();
+        ~Object() {
+            release();
+        }
 
-					auto it = std::find_if(_allocObj.begin(), _allocObj.end(), [obj](const std::unique_ptr<TType> &ptr) { return ptr.get() == obj;});
+        TType* operator->() {
+            return _slot->object();
+        }
 
-					if (it != _allocObj.end()){
-						_allocObj.erase(it);
-						_total--;
-						objToRem--;
-					}
-				}
-				if (objToRem > 0)
-					throw NoAllocatedObjectsToRemoveException();
-			}
-		};
+        const TType* operator->() const {
+            return _slot->object();
+        }
 
-		
-		template<typename... TArgs>
-		Object acquire(TArgs&&... p_args){
-			if (_availObj.empty())
-				throw NoAvailableObjectsException();
+        TType& operator*() {
+            return *_slot->object();
+        }
 
-			TType *obj = _availObj.back();
-			_availObj.pop_back();
+        const TType& operator*() const {
+            return *_slot->object();
+        }
 
-			new (obj) TType(std::forward<TArgs>(p_args)...);
+    private:
+        void release() noexcept {
+            if (!_pool || !_slot)
+                return;
 
-			Object objectWrapper(this, obj);
-			return objectWrapper;
-		}
-	
+            _slot->object()->~TType();
+            _pool->_available.push_back(_slot);
+            _pool = nullptr;
+            _slot = nullptr;
+        }
+
+        Pool* _pool;
+        Slot* _slot;
+    };
+
+    void resize(const std::size_t& numberOfObjectsStored) {
+        if (numberOfObjectsStored > _slots.size()) {
+            const std::size_t numberToAdd =
+                numberOfObjectsStored - _slots.size();
+
+            for (std::size_t i = 0; i < numberToAdd; ++i) {
+                std::unique_ptr<Slot> slot(new Slot);
+                _available.push_back(slot.get());
+                _slots.push_back(std::move(slot));
+            }
+            return;
+        }
+
+        const std::size_t numberToRemove =
+            _slots.size() - numberOfObjectsStored;
+
+        if (numberToRemove > _available.size())
+            throw NoAvailableObjToRemoveException();
+
+        for (std::size_t i = 0; i < numberToRemove; ++i) {
+            Slot* slot = _available.back();
+            _available.pop_back();
+
+            for (auto it = _slots.begin(); it != _slots.end(); ++it) {
+                if (it->get() == slot) {
+                    _slots.erase(it);
+                    break;
+                }
+            }
+        }
+    }
+
+    template<typename... TArgs>
+    Object acquire(TArgs&&... args) {
+        if (_available.empty())
+            throw NoAvailableObjectsException();
+
+        Slot* slot = _available.back();
+        _available.pop_back();
+
+        try {
+            new (slot->storage) TType(std::forward<TArgs>(args)...);
+        } catch (...) {
+            _available.push_back(slot);
+            throw;
+        }
+
+        return Object(this, slot);
+    }
+
+    class NoAvailableObjectsException : public std::runtime_error {
+    public:
+        NoAvailableObjectsException()
+            : std::runtime_error("Pool: no available objects.") {}
+    };
+
+    class NoAvailableObjToRemoveException : public std::runtime_error {
+    public:
+        NoAvailableObjToRemoveException()
+            : std::runtime_error("Pool: no available objects to remove.") {}
+    };
+
+private:
+    std::vector<std::unique_ptr<Slot>> _slots;
+    std::vector<Slot*> _available;
 };
-
-
 
 #endif

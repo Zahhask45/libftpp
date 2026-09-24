@@ -8,9 +8,9 @@ struct IVector2{
 	TType x;
 	TType y;
 
-	IVector2(TType x, TType y);
+	IVector2(TType x = 0, TType y = 0);
 
-	float length();
+	float length() const;
 	IVector2<float> normalize();
 	float dot(IVector2& v2);
 	IVector2<TType> cross();

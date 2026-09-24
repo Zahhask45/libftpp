@@ -5,6 +5,7 @@
 #include <functional>
 #include <unordered_map>
 #include "thread_safe_queue.hpp"
+#include "thread.hpp"
 
 class PersistentWorker {
 	public:
