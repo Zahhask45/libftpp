@@ -9,7 +9,10 @@ IVector3<TType>::IVector3(TType x, TType y, TType z){
 
 template<typename TType>
 float IVector3<TType>::length() const{
-	return (sqrt(static_cast<float>(x*x + y*y + z*z)));
+	float fx = static_cast<float>(x);
+	float fy = static_cast<float>(y);
+	float fz = static_cast<float>(z);
+	return (std::sqrt(fx*fx + fy*fy + fz*fz));
 }
 
 template<typename TType>

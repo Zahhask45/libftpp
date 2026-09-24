@@ -83,6 +83,11 @@ int main() {
 			myPool.resize(-1);
 		}
 		catch(const std::exception& e){}
+		try{
+			myPool.resize(5);
+			// myPool.resize(-2);
+		}
+		catch(const std::exception& e){}
 	}
 
 	try

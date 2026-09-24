@@ -8,7 +8,9 @@ IVector2<TType>::IVector2(TType x, TType y){
 
 template<typename TType>
 float IVector2<TType>::length() const{
-	return (sqrt(static_cast<float>(x*x + y*y)));
+	float fx = static_cast<float>(x);
+	float fy = static_cast<float>(y);
+	return (std::sqrt(fx*fx + fy*fy));
 }
 
 template<typename TType>

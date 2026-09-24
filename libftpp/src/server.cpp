@@ -8,11 +8,15 @@ Server::~Server(){
 }
 
 namespace{
+	const size_t maximumMessageSize = 16 * 1024 * 1024;
+
 	void sendAll(int socket, const char* data, size_t size) {
 		size_t sent = 0;
 
 		while (sent < size) {
 			ssize_t result = ::send(socket, data + sent, size - sent, 0);
+			if (result < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+				continue ;
 			if (result <= 0)
 				throw Server::SendingFailedException();
 
@@ -39,6 +43,7 @@ void Server::start(const size_t &p_port){
 	int flags = fcntl(_sockfd, F_GETFL, 0);
 	if (flags == -1 || fcntl(_sockfd, F_SETFL, flags | O_NONBLOCK) == -1){
 		close(_sockfd);
+		_sockfd = -1;
 		throw FailedToStartException("Failed to set the non-block mode.");
 	}
 
@@ -49,14 +54,17 @@ void Server::start(const size_t &p_port){
 
 	if (bind(_sockfd, (struct sockaddr *)&servAddr, sizeof(servAddr)) < 0){
 		close(_sockfd);
+		_sockfd = -1;
 		throw FailedToStartException("Failed to bind socket.");
 	}
 
 	if (listen(_sockfd, 5) < 0){
 		close(_sockfd);
+		_sockfd = -1;
 		throw FailedToStartException("Failed to listen to the socket.");
 	}
 
+	_shouldEnd = false;
 	_isOn = true;
 	_receiver = std::thread(&Server::receiveMsgs, this);
 }
@@ -72,6 +80,10 @@ void Server::stop(){
 	for (const auto &[clientID, client] : _clients){
 		close(client.sockfd);
 	}
+
+	_clients.clear();
+	_msgsToSend.clear();
+	_msgs.clear();
 
 	close(_sockfd);
 	_sockfd = -1;
@@ -201,6 +213,7 @@ std::map<Server::ClientID, Server::Client>::iterator Server::receiveMsg(std::map
 
 		if (client.bytesRead <= 0){
 			close(client.sockfd);
+			_msgsToSend.erase(it->first);
 			it = _clients.erase(it);
 			return it;
 		}
@@ -211,6 +224,11 @@ std::map<Server::ClientID, Server::Client>::iterator Server::receiveMsg(std::map
 
 		client.state = Client::SIZE;
 		client.totalBytes = 0;
+		if (client.size > maximumMessageSize){
+			close(client.sockfd);
+			_msgsToSend.erase(it->first);
+			return _clients.erase(it);
+		}
 		client.data.resize(client.size, '\0');
 		if (client.size == 0){
 			client.state = Client::MESSAGE;
@@ -223,6 +241,7 @@ std::map<Server::ClientID, Server::Client>::iterator Server::receiveMsg(std::map
 
 		if (client.bytesRead <= 0){
 			close(client.sockfd);
+			_msgsToSend.erase(it->first);
 			it = _clients.erase(it);
 			return it;
 		}
@@ -300,13 +319,13 @@ void Server::receiveMsgs(){
 					++it;
 					continue ;
 				}
-				
+
 				auto msgIt = _msgsToSend.find(it->first);
 				if (msgIt == _msgsToSend.end() || msgIt->second.empty()){
 					++it;
 					continue ;
 				}
-				
+
 				try{
 					sendMsg(msgIt->second.front(), it->first);
 					msgIt->second.pop();

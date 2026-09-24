@@ -8,11 +8,14 @@ Client::~Client(){
 }
 
 namespace {
+	const size_t maximumMessageSize = 16 * 1024 * 1024;
 	void sendAll(int socket, const char *data, size_t size){
 		size_t sent = 0;
 
 		while (sent < size){
 			ssize_t result = ::send(socket, data + sent, size - sent, 0);
+			if (result < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+				continue ;
 			if (result <= 0)
 				throw Client::SendingFailedException();
 
@@ -33,6 +36,7 @@ void Client::connect(const std::string &address, const size_t &port){
 	int flags = fcntl(_sockfd, F_GETFL, 0);
 	if (flags == -1 || fcntl(_sockfd, F_SETFL, flags | O_NONBLOCK) == -1){
 		close(_sockfd);
+		_sockfd = -1;
 		throw ConnectionFailedException("Failed to set non-block mode");
 	}
 
@@ -48,6 +52,7 @@ void Client::connect(const std::string &address, const size_t &port){
 		int status = getaddrinfo("localhost", nullptr, &hints, &res);
 		if (status != 0){
 			close(_sockfd);
+			_sockfd = -1;
 			throw ConnectionFailedException("Failed to resolve localhost");
 		}
 
@@ -56,12 +61,14 @@ void Client::connect(const std::string &address, const size_t &port){
 	}
 	else if (inet_pton(AF_INET, address.c_str(), &servAddr.sin_addr) <= 0){
 		close(_sockfd);
+		_sockfd = -1;
 		throw ConnectionFailedException("Invalid address");
 	}
 	
 	if (::connect(_sockfd, reinterpret_cast<sockaddr *>(&servAddr), sizeof(servAddr)) < 0){
 		if (errno != EINPROGRESS){
 			close(_sockfd); 
+			_sockfd = -1;
 			throw ConnectionFailedException("Failed to connect");
 		}
 
@@ -76,9 +83,11 @@ void Client::connect(const std::string &address, const size_t &port){
 		int selectResult =  select(_sockfd + 1, nullptr, &writefds, nullptr, &timeout);
 		if (selectResult == 0){
 			close(_sockfd);
+			_sockfd = -1;
 			throw ConnectionFailedException("Failed to connect(timeout)");
 		} else if (selectResult < 0 || !FD_ISSET(_sockfd, &writefds)){
 			close(_sockfd);
+			_sockfd = -1;
 			throw ConnectionFailedException("Failed to connect(select error)");
 		}
 
@@ -86,10 +95,12 @@ void Client::connect(const std::string &address, const size_t &port){
 		socklen_t len = sizeof(error);
 		if (getsockopt(_sockfd, SOL_SOCKET, SO_ERROR, &error, &len) < 0 || error != 0){
 			close(_sockfd);
+			_sockfd = -1;
 			throw ConnectionFailedException("Failed to connect: " + std::string(strerror(error)));
 		}
 	}
 
+	_shouldEnd = false;
 	_isConnected = true;
 	_receiver = std::thread(&Client::receiveMsgs, this);
 }
@@ -161,6 +172,10 @@ void Client::receiveMsg(ClientBuf &clientBuf){
 
 		clientBuf.state = ClientBuf::SIZE;
 		clientBuf.totalBytes = 0;
+		if (clientBuf.size > maximumMessageSize){
+			_shouldEnd = true;
+			return ;
+		}
 		clientBuf.data.resize(clientBuf.size, '\0');
 		if (clientBuf.size == 0){
 			clientBuf.state = ClientBuf::MESSAGE;

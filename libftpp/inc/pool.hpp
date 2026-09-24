@@ -5,6 +5,8 @@
 #include <memory>
 #include <new>
 #include <stdexcept>
+#include <limits>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -88,7 +90,23 @@ public:
         Slot* _slot;
     };
 
+    template<typename TSize,
+        typename std::enable_if<
+            std::is_integral<TSize>::value &&
+            std::is_signed<TSize>::value,
+            int
+        >::type = 0>
+    void resize(TSize numberOfObjectsStored) {
+        if (numberOfObjectsStored < 0)
+            throw std::invalid_argument("Pool: invalid size.");
+
+        resize(static_cast<std::size_t>(numberOfObjectsStored));
+    }
+
     void resize(const std::size_t& numberOfObjectsStored) {
+        if (numberOfObjectsStored == std::numeric_limits<std::size_t>::max())
+            throw std::invalid_argument("Pool: invalid size.");
+
         if (numberOfObjectsStored > _slots.size()) {
             const std::size_t numberToAdd =
                 numberOfObjectsStored - _slots.size();

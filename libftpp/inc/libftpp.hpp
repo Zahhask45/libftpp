@@ -7,5 +7,7 @@
 #include "threading.hpp"
 #include "network.hpp"
 #include "mathematics.hpp"
+#include "timer.hpp"
+#include "chronometer.hpp"
 
 #endif
