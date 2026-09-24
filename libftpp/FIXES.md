@@ -1,329 +1,331 @@
-# Mandatory fixes still needed
+# Fix these files only
 
-This list contains only the parts that still need correction. The current
-library builds with `make`, but the template smoke test exposes errors that
-the Makefile does not instantiate.
-
-## 1. Observer — compilation and callback storage
-
-File: `inc/observer.hpp`
-
-Current problems:
-
-```cpp
-auto it = event.find(event);
-```
-
-`event` is the function argument. The map is named `events`.
-
-Also, this is invalid:
-
-```cpp
-std::vector<const std::function<void()>>
-```
-
-Use callback values, not pointers or `const` value types:
-
-```cpp
-template<typename TEvent>
-class Observer {
-public:
-    void subscribe(const TEvent& event,
-                   const std::function<void()>& callback) {
-        _events[event].push_back(callback);
-    }
-
-    void notify(const TEvent& event) {
-        auto it = _events.find(event);
-        if (it == _events.end())
-            return;
-
-        for (const auto& callback : it->second)
-            callback();
-    }
-
-private:
-    std::unordered_map<TEvent, std::vector<std::function<void()>>> _events;
-};
-```
-
-Do not store `&callback`; the argument may no longer exist when `notify()` is
-called.
+The following are the remaining concrete fixes found in the current code.
+Each section says exactly what to replace. `Observer`, `StateMachine`,
+`ThreadSafeQueue`, `WorkerPool`, and `ThreadSafeIOStream` are not listed because
+their current versions already contain the fixes discussed earlier.
 
 ---
 
-## 2. StateMachine — compilation and dangling callbacks
-
-File: `inc/state_machine.hpp`
-
-Replace both callback containers:
-
-```cpp
-std::vector<const std::function<void()>>
-```
-
-with:
-
-```cpp
-std::vector<std::function<void()>>
-```
-
-Store copies instead of addresses:
-
-```cpp
-void addAction(const TState& state,
-               const std::function<void()>& callback) {
-    _stateActions[state].push_back(callback);
-}
-
-void addTransition(const TState& startState,
-                   const TState& finalState,
-                   const std::function<void()>& callback) {
-    _transitions[{startState, finalState}].push_back(callback);
-}
-```
-
-The current code uses `&lambda`, which becomes dangling after the method
-returns. Keep the existing value-based `_currentState` design and the existing
-exceptions for missing states/transitions.
-
----
-
-## 3. ThreadSafeQueue — include guard
-
-File: `inc/thread_safe_queue.hpp`
-
-The implementation is otherwise acceptable for the required queue API, but
-the include guard should match the file and avoid generic/mistyped names:
-
-```cpp
-#ifndef THREAD_SAFE_QUEUE_HPP
-#define THREAD_SAFE_QUEUE_HPP
-```
-
-Keep the `mutable` mutex because `empty()` is `const`:
-
-```cpp
-mutable std::mutex _mutex;
-```
-
----
-
-## 4. ThreadSafeIOStream — one mutex for all threads
-
-Files:
-
-- `inc/thread_safe_iostream.hpp`
-- `src/thread_safe_iostream.cpp`
-
-`threadSafeCout` is thread-local, so a normal member mutex gives every thread
-its own mutex. That does not synchronize output between threads.
-
-Change the member mutex to a static shared mutex:
-
-```cpp
-private:
-    static std::mutex _outputMutex;
-    std::string _prefix;
-    std::ostringstream _buffer;
-```
-
-Define it once:
-
-```cpp
-std::mutex ThreadSafeIOStream::_outputMutex;
-thread_local ThreadSafeIOStream threadSafeCout;
-```
-
-Use `_outputMutex` in `setPrefix()`, input operations, and the manipulator
-overload:
-
-```cpp
-ThreadSafeIOStream&
-ThreadSafeIOStream::operator<<(
-    std::ostream& (*manipulator)(std::ostream&)) {
-    std::lock_guard<std::mutex> lock(_outputMutex);
-    std::cout << _prefix << _buffer.str();
-    manipulator(std::cout);
-    _buffer.str("");
-    _buffer.clear();
-    return *this;
-}
-```
-
-The buffer and prefix can remain per-thread; the actual I/O mutex must be
-shared.
-
----
-
-## 5. WorkerPool — interface and locking
-
-File: `inc/worker_pool.hpp`
-
-Make the interface destructor virtual:
-
-```cpp
-class IJobs {
-public:
-    virtual ~IJobs() = default;
-    virtual void addJob(const std::function<void()>& jobToExecute) = 0;
-};
-```
-
-File: `src/worker_pool.cpp`
-
-Do not hold `_queueMutex` while executing user code. Pop the job, release the
-lock, then call the job:
-
-```cpp
-std::function<void()> job;
-
-{
-    std::unique_lock<std::mutex> lock(_queueMutex);
-    _condition.wait(lock, [&]() {
-        return _stopthat || !_queue.empty();
-    });
-
-    if (_stopthat && _queue.empty())
-        return;
-
-    job = _queue.pop_front();
-}
-
-job();
-```
-
-Choose whether destruction drains or discards queued jobs. The code above
-drains them before workers exit. Do not catch an exception and silently lose
-the job without deciding what the worker-pool policy should be.
-
----
-
-## 6. PersistentWorker — dangling captures and task lookup
+## 1. PersistentWorker: replace both methods
 
 File: `src/persistent_worker.cpp`
 
-This is unsafe:
+### Problem
+
+`addTask()` now captures `name` and `jobToExecute` correctly, but task-map
+access is still unsafe:
+
+- `_toRemove[name]` can create entries unexpectedly;
+- calling `removeTask()` with an unknown name creates a new `std::thread`
+  entry through `_tasks[name]`;
+- adding the same name twice creates a thread that is not stored correctly;
+- `_tasks` is accessed without `_guard`.
+
+### Replace `addTask()` with this
 
 ```cpp
-std::thread([&]() {
-    ...
-    name
-    jobToExecute()
-})
+void PersistentWorker::addTask(
+    const std::string& name,
+    const std::function<void()>& jobToExecute) {
+    std::lock_guard<std::mutex> lock(_guard);
+
+    if (_tasks.find(name) != _tasks.end())
+        throw std::runtime_error("PersistentWorker: task already exists.");
+
+    _toRemove[name] = false;
+    _tasks.emplace(
+        name,
+        std::thread([this, name, jobToExecute]() {
+            while (true) {
+                {
+                    std::lock_guard<std::mutex> guard(_guard);
+                    if (_toRemove[name])
+                        return;
+                }
+
+                jobToExecute();
+            }
+        })
+    );
+}
 ```
 
-`name` and `jobToExecute` are parameters of `addTask()` and the thread may
-outlive that function. Capture them by value:
+### Replace `removeTask()` with this
 
 ```cpp
-std::thread([this, name, jobToExecute]() {
-    while (true) {
-        {
-            std::lock_guard<std::mutex> lock(_guard);
-            auto it = _toRemove.find(name);
-            if (it != _toRemove.end() && it->second)
-                return;
-        }
+void PersistentWorker::removeTask(const std::string& name) {
+    std::thread task;
 
-        jobToExecute();
+    {
+        std::lock_guard<std::mutex> lock(_guard);
+
+        auto taskIt = _tasks.find(name);
+        if (taskIt == _tasks.end())
+            throw std::runtime_error("PersistentWorker: unknown task.");
+
+        _toRemove[name] = true;
+        task = std::move(taskIt->second);
+        _tasks.erase(taskIt);
     }
-})
-```
 
-Also fix task management:
+    if (task.joinable())
+        task.join();
 
-- lock accesses to `_tasks` and `_toRemove`;
-- reject duplicate task names;
-- do not use `_tasks[name]` in `removeTask()`, because it creates a task if
-  the name is unknown;
-- throw or otherwise report removal of an unknown task;
-- do not hold `_guard` while executing the user task.
-
----
-
-## 7. Network receive code — incorrect byte pointer arithmetic
-
-Files:
-
-- `src/client.cpp`
-- `src/server.cpp`
-
-Do not use:
-
-```cpp
-&clientBuf.size + clientBuf.totalBytes
-```
-
-or:
-
-```cpp
-&client.size + client.totalBytes
-```
-
-That advances by `sizeof(size_t)` units instead of bytes. Use:
-
-```cpp
-char* sizeBytes =
-    reinterpret_cast<char*>(&clientBuf.size) + clientBuf.totalBytes;
-```
-
-For the server, use the equivalent `client` expression.
-
----
-
-## 8. Network send code — handle partial sends
-
-Files:
-
-- `src/client.cpp`
-- `src/server.cpp`
-
-One TCP `send()` call is not guaranteed to send the complete buffer. Replace
-the direct calls with a loop:
-
-```cpp
-void sendAll(int socket, const char* data, size_t size) {
-    size_t sent = 0;
-    while (sent < size) {
-        ssize_t result = ::send(socket, data + sent, size - sent, 0);
-        if (result <= 0)
-            throw SendingFailedException();
-        sent += static_cast<size_t>(result);
+    {
+        std::lock_guard<std::mutex> lock(_guard);
+        _toRemove.erase(name);
     }
 }
 ```
 
-Use it for both the size header and serialized message data.
+### Add these includes
 
-Do not remove a queued message after a failed or partial send unless the
-message was fully transmitted.
+At the top of `src/persistent_worker.cpp`:
+
+```cpp
+#include <stdexcept>
+#include <utility>
+```
+
+### Replace the destructor
+
+The destructor must not iterate over `_tasks` while another method can modify
+the map. Replace it with:
+
+```cpp
+PersistentWorker::~PersistentWorker() {
+    std::vector<std::thread> tasks;
+
+    {
+        std::lock_guard<std::mutex> lock(_guard);
+
+        for (auto& entry : _toRemove)
+            entry.second = true;
+
+        for (auto& entry : _tasks)
+            tasks.push_back(std::move(entry.second));
+
+        _tasks.clear();
+    }
+
+    for (auto& task : tasks) {
+        if (task.joinable())
+            task.join();
+    }
+}
+```
+
+Add this include too:
+
+```cpp
+#include <vector>
+```
+
+Do not hold `_guard` while calling `jobToExecute()` or while joining a thread.
 
 ---
 
-## 9. Network shutdown — wake receiver threads
+## 2. Client: send all bytes and handle zero-length payloads
 
-Files:
+File: `src/client.cpp`
 
-- `src/client.cpp`
-- `src/server.cpp`
+### Problem
 
-Both receiver threads can block inside `select()`. Changing an atomic flag
-does not wake `select()`, so `disconnect()` or `stop()` can hang while joining.
+This code assumes one `send()` sends everything:
 
-The shutdown path must wake the socket before joining:
+```cpp
+if (::send(_sockfd, &size, sizeof(size), 0) < 0)
+    throw SendingFailedException();
+if (::send(_sockfd, data.c_str(), size, 0) < 0)
+    throw SendingFailedException();
+```
 
-1. mark the object as stopping;
-2. call `shutdown(socket, SHUT_RDWR)` where appropriate;
-3. close or otherwise wake the socket/select loop;
-4. join the receiver thread;
-5. clear the descriptor.
+TCP is allowed to send only part of the requested buffer.
 
-Make sure another thread cannot use the descriptor after it is closed.
+### Add this helper near the top of `src/client.cpp`
+
+```cpp
+namespace {
+void sendAll(int socket, const char* data, size_t size) {
+    size_t sent = 0;
+
+    while (sent < size) {
+        ssize_t result = ::send(socket, data + sent, size - sent, 0);
+        if (result <= 0)
+            throw Client::SendingFailedException();
+
+        sent += static_cast<size_t>(result);
+    }
+}
+}
+```
+
+### Replace the body of `Client::sendMsg()`
+
+Keep the initial connection check, then use:
+
+```cpp
+void Client::sendMsg(const Message& message) {
+    if (!_isConnected)
+        throw NoConnectException();
+
+    std::string data = message.serialize();
+    size_t size = data.size();
+
+    sendAll(_sockfd,
+            reinterpret_cast<const char*>(&size),
+            sizeof(size));
+
+    if (!data.empty())
+        sendAll(_sockfd, data.data(), data.size());
+}
+```
+
+### Fix zero-length received messages
+
+In `Client::receiveMsg()`, immediately after:
+
+```cpp
+clientBuf.data.resize(clientBuf.size, '\0');
+```
+
+add:
+
+```cpp
+if (clientBuf.size == 0) {
+    clientBuf.state = ClientBuf::MESSAGE;
+    clientBuf.totalBytes = 0;
+}
+```
+
+Do not call `recv()` with a zero-length payload and interpret its result as a
+disconnect.
 
 ---
 
-## 10. Vector API — const correctness and templates
+## 3. Server: send all bytes and handle zero-length payloads
+
+File: `src/server.cpp`
+
+### Add this helper near the top of `src/server.cpp`
+
+```cpp
+namespace {
+void sendAll(int socket, const char* data, size_t size) {
+    size_t sent = 0;
+
+    while (sent < size) {
+        ssize_t result = ::send(socket, data + sent, size - sent, 0);
+        if (result <= 0)
+            throw Server::SendingFailedException();
+
+        sent += static_cast<size_t>(result);
+    }
+}
+}
+```
+
+### Replace `Server::sendMsg()`
+
+```cpp
+void Server::sendMsg(const Message& message, ClientID clientID) {
+    if (!_isOn)
+        throw NotStartedException();
+
+    auto it = _clients.find(clientID);
+    if (it == _clients.end())
+        throw UnknownClientException();
+
+    std::string data = message.serialize();
+    size_t size = data.size();
+
+    sendAll(it->second.sockfd,
+            reinterpret_cast<const char*>(&size),
+            sizeof(size));
+
+    if (!data.empty())
+        sendAll(it->second.sockfd, data.data(), data.size());
+}
+```
+
+### Fix zero-length received messages
+
+In `Server::receiveMsg()`, immediately after:
+
+```cpp
+client.data.resize(client.size, '\0');
+```
+
+add:
+
+```cpp
+if (client.size == 0) {
+    client.state = Client::MESSAGE;
+    client.totalBytes = 0;
+}
+```
+
+---
+
+## 4. Server: do not remove a message after a failed send
+
+File: `src/server.cpp`
+
+Current code:
+
+```cpp
+try{
+    sendMsg(msgIt->second.front(), it->first);
+} catch (const std::exception &e){}
+msgIt->second.pop();
+```
+
+This loses the message even when `sendMsg()` fails.
+
+Replace it with:
+
+```cpp
+try {
+    sendMsg(msgIt->second.front(), it->first);
+    msgIt->second.pop();
+} catch (const std::exception&) {
+    close(it->second.sockfd);
+    _msgsToSend.erase(msgIt);
+    it = _clients.erase(it);
+}
+```
+
+Because erasing `it` invalidates the iterator, change the surrounding loop:
+
+```cpp
+for (auto it = _clients.begin(); it != _clients.end();) {
+    if (!FD_ISSET(it->second.sockfd, &writefds)) {
+        ++it;
+        continue;
+    }
+
+    auto msgIt = _msgsToSend.find(it->first);
+    if (msgIt == _msgsToSend.end() || msgIt->second.empty()) {
+        ++it;
+        continue;
+    }
+
+    try {
+        sendMsg(msgIt->second.front(), it->first);
+        msgIt->second.pop();
+        ++it;
+    } catch (const std::exception&) {
+        close(it->second.sockfd);
+        _msgsToSend.erase(msgIt);
+        it = _clients.erase(it);
+    }
+}
+```
+
+---
+
+## 5. Vector declarations: make the existing definitions const-correct
 
 Files:
 
@@ -332,68 +334,107 @@ Files:
 - `inc/ivector3.hpp`
 - `src/ivector3.cpp`
 
-Change input vector parameters to const references and mark read-only methods
-const. For example:
+The current methods only accept non-const lvalue references. Replace the
+`IVector2` declarations with:
 
 ```cpp
-float dot(const IVector2& other) const;
-IVector2<TType> operator+(const IVector2& other) const;
-bool operator==(const IVector2& other) const;
+float length() const;
+IVector2<float> normalize() const;
+float dot(const IVector2& v2) const;
+IVector2<TType> cross() const;
+
+IVector2<TType> operator+(const IVector2& v2) const;
+IVector2<TType> operator-(const IVector2& v2) const;
+IVector2<TType> operator*(const IVector2& v2) const;
+IVector2<TType> operator/(const IVector2& v2) const;
+bool operator==(const IVector2& v2) const;
+bool operator!=(const IVector2& v2) const;
 ```
 
-Apply the same pattern to `IVector3`, including `cross()`.
-
-Keep the zero-length guard in `normalize()`, and keep:
+Then make the matching changes in every `ivector2.cpp` definition:
 
 ```cpp
-return !(*this == other);
+float IVector2<TType>::dot(const IVector2<TType>& v2) const
 ```
 
-for `operator!=`.
+and similarly add `const` to the definitions of `normalize`, `cross`,
+`operator+`, `operator-`, `operator*`, `operator/`, `operator==`, and
+`operator!=`.
 
-The template definitions are currently in `.cpp` files, so only the explicit
-`int` and `float` instantiations work. For a genuinely generic templated API,
-move the definitions into the headers. Otherwise, explicitly limit and
-document the supported types.
+For `IVector3`, use:
+
+```cpp
+float length() const;
+IVector3<float> normalize() const;
+float dot(const IVector3& v2) const;
+IVector3<TType> cross(const IVector3& v2) const;
+
+IVector3<TType> operator+(const IVector3& v2) const;
+IVector3<TType> operator-(const IVector3& v2) const;
+IVector3<TType> operator*(const IVector3& v2) const;
+IVector3<TType> operator/(const IVector3& v2) const;
+bool operator==(const IVector3& v2) const;
+bool operator!=(const IVector3& v2) const;
+```
+
+Apply the same `const` changes to `src/ivector3.cpp`.
+
+Keep the zero-length checks already present in `normalize()`.
 
 ---
 
-## 11. Direct includes and Makefile typo
+## 6. Vector templates: choose one of these two options
 
-Add the headers required directly by each file:
+The definitions are in `.cpp` files, so currently only these types are
+available:
 
 ```cpp
-#include <utility>
+template struct IVector2<int>;
+template struct IVector2<float>;
+template struct IVector3<int>;
+template struct IVector3<float>;
 ```
 
-is needed where `std::move` or `std::forward` is used, especially
-`inc/singleton.hpp` and `src/thread.cpp`.
+If supporting only `int` and `float` is intentional, leave the explicit
+instantiations and do nothing.
 
-In `Makefile`, this variable is misspelled and unused:
+If the class must work for any `TType`, move the template definitions from
+the two `.cpp` files into their corresponding `.hpp` files. Do not keep both
+the header definitions and the `.cpp` definitions, or you may get duplicate
+definitions.
+
+---
+
+## 7. Makefile typo
+
+File: `Makefile`
+
+Replace:
 
 ```make
 SRC = $(addpredix $(SRC_DIR), $(SRCS))
 ```
 
-Either remove it or correct it:
+with:
 
 ```make
 SRC = $(addprefix $(SRC_DIR), $(SRCS))
 ```
 
+This variable is currently unused, so removing the line is also valid.
+
 ---
 
-## Validation after editing
+## Check after editing
 
-Run the normal build:
+Run:
 
 ```bash
 make fclean
 make
 ```
 
-Then instantiate the templates, because `make` does not test all template
-methods:
+Then run a template check. This must compile without errors:
 
 ```cpp
 #include "libftpp.hpp"
