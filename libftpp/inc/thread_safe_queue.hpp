@@ -1,47 +1,49 @@
-#ifndef THREAD_SAFE_QUEUE_HPP
-#define THREAD_SAFE_QUEUE_HPP
+#ifndef THREAD_queue_HPP
+#define THREAD_queue_HPP
 
 #include<mutex>
 #include<deque>
-#include<thread>
+#include<stdexcept>
 
 template<typename TType>
 class ThreadSafeQueue{
 	public:
 		void push_back(const TType& newElement){
-			std::unique_lock<std::mutex> lock(_mutex);
+			std::lock_guard<std::mutex> lock(_mutex);
 
-			_safe_queue.push_back(newElement);
+			_queue.push_back(newElement);
 		};
 		
 		void push_front(const TType& newElement){
-			std::unique_lock<std::mutex> lock(_mutex);
+			std::lock_guard<std::mutex> lock(_mutex);
 			
-			_safe_queue.push_front(newElement);
+			_queue.push_front(newElement);
 		};
 		TType pop_back(){
-			std::unique_lock<std::mutex> lock(_mutex);
-			if (_safe_queue.empty())
-				throw std::runtime_error("Empty queue");
+			std::lock_guard<std::mutex> lock(_mutex);
+			if (_queue.empty())
+				throw std::runtime_error("ThreadSafeQueue: empty queue");
 				
-			TType temp = _safe_queue.back();
-			_safe_queue.pop_back();
-			return temp;
+			TType value = _queue.back();
+			_queue.pop_back();
+			return value;
 		};
 		TType pop_front(){
-			std::unique_lock<std::mutex> lock(_mutex);
-			if (_safe_queue.empty())
-				throw std::runtime_error("Empty queue");
-			TType temp = _safe_queue.front();
-			_safe_queue.pop_front();
-			return temp;
+			std::lock_guard<std::mutex> lock(_mutex);
+			if (_queue.empty())
+				throw std::runtime_error("ThreadSafeQueue: empty queue");
+				
+			TType value = _queue.front();
+			_queue.pop_front();
+			return value;
 		};
 		bool empty() const {
-	        return (_safe_queue.empty());
+			std::lock_guard<std::mutex> lock(_mutex);
+	        return _queue.empty();
 	    }
 	private:
-		std::mutex _mutex;
-		std::deque<TType> _safe_queue;
+		mutable std::mutex _mutex;
+		std::deque<TType> _queue;
 };
 
 #endif

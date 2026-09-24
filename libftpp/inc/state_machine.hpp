@@ -2,80 +2,85 @@
 #define STATE_MACHINE_HPP
 
 #include <functional>
-#include <utility>
+#include <stdexcept>
 #include <unordered_map>
 #include <vector>
-#include <sstream>
-
-
 
 template<typename TState>
 class StateMachine{
 	public:
-		template<typename T, typename U>
 		struct TransitionKey{
-			T start;
-			U end;
+			TState from;
+			TState to;
 
 			bool operator==(const TransitionKey &rhs) const{
-				return (this->start == rhs.start && this->end == rhs.end);
+				return from == rhs.from && to == rhs.to;
 			}
 		};
-		template<typename T, typename U>
-		struct stateHash {
-			std::size_t operator()(const TransitionKey<T, U>& t) const{
-				return std::hash<T>()(t.start);
+
+		
+		struct TransitionKeyHash {
+			std::size_t operator()(const TransitionKey& key) const{
+				std::size_t h1= std::hash<TState>{}(key.from);
+				std::size_t h2= std::hash<TState>{}(key.to);
+				return h1 ^ (h2 << 1);
 			}	
 		};
 
 
-	
 		void addState(const TState& state){
-			if (!_curstate){
-				_curstate = new TState(state);
+			_stateActions[state];
+			if (!_hasCurrentState){
+				_currentState = state, _hasCurrentState = true;
 			}
-			_states[state];
 			
 		};
+		
 		void addAction(const TState& state, const std::function<void()>& lambda){
-			_states[state].push_back(&lambda);
+			_stateActions[state].push_back(&lambda);
 		};
+		
 		void addTransition(const TState& startState, const TState& finalState, const std::function<void()>& lambda){
 			_transitions[{startState,finalState}].push_back(&lambda);
 		};
+		
 		void transitionTo(const TState& state){
-			// {
-			// 	auto it = _states.find(state);
-			// 	if (it == _states.end()){
-			// 		throw std::invalid_argument("Wrong");
-			// 	}
-			// }
-			// if (*_curstate == state){
-			// 	this->update();
-			// }
-			auto it = _transitions.find({*_curstate, state});
-			if (it == _transitions.end())throw std::invalid_argument("Invalid");
-			delete _curstate;
-			_curstate = new TState(state);
-			for (auto lambda : it->second)
-				(*lambda)(); 
+			if (!_hasCurrentState)
+				throw std::runtime_error("StateMachine: no current state");
+
+			auto it = _transitions.find({ _currentState, state });
+			if (it == _transitions.end())
+				throw std::invalid_argument("StateMachine: invalid transition");
 			
+			_currentState = state;
+			for (const auto& callback : it->second)
+				if (callback) 
+					callback();	
 		};
+		
 		void update(){
-			if (!_curstate) throw std::runtime_error("empty");
-			for (auto lambda : _states[*_curstate])
-				(*lambda)();
+			if (!_hasCurrentState)
+				throw std::runtime_error("StateMachine: current state not set");
+
+			auto it = _stateActions.find(_currentState);
+			if (it == _stateActions.end())
+				throw std::runtime_error("StateMachine: state not found");
+			for (const auto& callback : it->second)
+				if (callback)
+					callback();
 		};
-		StateMachine(){
-			_curstate = nullptr;
-		};
-		~StateMachine(){
-			delete _curstate;
-		}
+		// 
+		// StateMachine(){
+		// 	_currentState = nullptr;
+		// };
+		// ~StateMachine(){
+		// 	delete _curstate;
+		// }
 	private:
-		std::unordered_map<TState, std::vector<const std::function<void()>*>> _states;
-		std::unordered_map<TransitionKey<TState, TState>, std::vector<const std::function<void()>*>, stateHash<TState, TState>> _transitions;
-		TState *_curstate;
+		TState _currentState{};
+		bool _hasCurrentState = false;
+		std::unordered_map<TState, std::vector<const std::function<void()>>> _stateActions;
+		std::unordered_map<TransitionKey, std::vector<std::function<void()>>, TransitionKeyHash> _transitions;
 
 };
 

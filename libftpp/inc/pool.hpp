@@ -13,25 +13,26 @@ class Pool{
 		// nested class
 		class Object{
 			private:
-				friend class Pool;
-				
-				Pool<TType>* pool;
-				TType* obj;
+				Pool* _pool;
+				TType* _object;
 
-				Object(Pool<TType> *p_pool, TType* p_obj): pool(p_pool), obj(p_obj){}
 				
 			public:
+				Object(Pool* pool, TType* object): _pool(pool), _object(object){}
+				
 				~Object(){
-					obj->~TType();
-
-					if (pool){
-						if (obj)	
-							pool->_availObj.push_back(obj);
+					if (_object && _pool){
+						_object->~TType();
+						_pool->release(_object);
 					}
 				}
 				
 				TType* operator->(){
-					return obj;
+					return _object;
+				}
+				
+				const TType* operator->() const{
+					return _object;
 				};
 					
 		};
@@ -43,10 +44,8 @@ class Pool{
 		size_t _total = 0;
 
 	public:
-		void resize(const ssize_t& numberOfObjectsStored){
-			if (numberOfObjectsStored < 0)
-				throw InvalidAmountOfResize();
-			if (numberOfObjectsStored > _total){
+		void resize(const size_t& count){
+			while (count > _allocObj){
 				// grow size
 				size_t objToAlloc = numberOfObjectsStored - _total;
 
@@ -97,32 +96,6 @@ class Pool{
 			Object objectWrapper(this, obj);
 			return objectWrapper;
 		}
-
-
-	
-
-	public:
-		class NoAvailableObjectsException : public std::runtime_error{
-			public:
-				explicit NoAvailableObjectsException():
-					runtime_error("Pool: No Available Objects."){}
-		};
-
-		class NoAvailableObjToRemoveException : public std::runtime_error{
-			public:
-				explicit NoAvailableObjToRemoveException():
-					runtime_error("Pool: No Available Objects to Remove."){}
-		};
-
-		class NoAllocatedObjectsToRemoveException : public std::exception{
-			public:
-				const char *what() const noexcept {return "Pool: No Allocated Objects to Remove.";}
-		};
-
-		class InvalidAmountOfResize : public std::exception{
-			public:
-				const char *what() const noexcept {return "Pool: Invalid Amount of Resize aka negative.";}
-		};
 	
 };
 

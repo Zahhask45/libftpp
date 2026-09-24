@@ -4,18 +4,17 @@
 #include <thread>
 #include <functional>
 #include <string>
-#include "thread_safe_iostream.hpp"
 
 class Thread{
 	public:
-		Thread(const std::string& name, std::function<void()> functToExecute);
+		Thread(const std::string& name, std::function<void()> func);
 		void start();
 		void stop();
 	private:
-		static void  _trueStart(const std::string& name, const std::function<void()> &functToExecute);
+		static void run(const std::string& name, const std::function<void()> &func);
 	private:
 		std::string _name;
-		std::function<void()> _functToExecute;
+		std::function<void()> _func;
 		std::thread _thread;
 };
 

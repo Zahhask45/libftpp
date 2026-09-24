@@ -293,70 +293,101 @@ void run() {
 
 ---
 
-## 5) Pool: fix the lifetime model and avoid stale pointers
+## 5) Pool: keep shrink, but fix object lifetime
 
 The subject says:
 - `Pool::Object` must provide access to a preallocated object.
 - When the object is released, call its destructor but do not deallocate memory.
 
-Your current code is close, but dangerous because it stores raw pointers and manipulates object lifetimes manually without enough validation.
+Do **not** remove shrinking. Shrinking is valid if the pool removes only available objects and throws when a live `Pool::Object` would be invalidated.
 
-Safer design:
-- Keep a vector of preallocated storage blocks.
-- Store raw pointers in a free-list.
-- When object is returned, destroy it in-place and push the pointer back to the pool.
-- `acquire()` must reuse the same storage object.
+The real lifetime problem is using `std::unique_ptr<TType>` for objects that are also reconstructed with placement `new`. That constructs `TType` once during allocation, constructs another `TType` over the first one in `acquire()`, and can later destroy the same storage twice. Use untyped aligned storage for the slots instead.
 
-Example structure:
+This version supports both growth and shrinking:
 
 ```cpp
 #ifndef POOL_HPP
 #define POOL_HPP
 
-#include <algorithm>
+#include <cstddef>
 #include <memory>
+#include <new>
 #include <stdexcept>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 template<typename TType>
 class Pool {
+private:
+    struct Slot {
+        typename std::aligned_storage<sizeof(TType), alignof(TType)>::type storage;
+        bool constructed = false;
+
+        TType* object() {
+            return reinterpret_cast<TType*>(&storage);
+        }
+    };
+
 public:
     class Object {
+        friend class Pool;
+
+        Object(Pool* pool, Slot* slot)
+            : _pool(pool), _slot(slot) {}
+
     public:
-        Object(Pool* pool, TType* object)
-            : _pool(pool), _object(object) {}
+        Object(Object&& other) noexcept
+            : _pool(other._pool), _slot(other._slot) {
+            other._pool = nullptr;
+            other._slot = nullptr;
+        }
+
+        Object(const Object&) = delete;
+        Object& operator=(const Object&) = delete;
 
         ~Object() {
-            if (_object && _pool) {
-                _object->~TType();
-                _pool->release(_object);
+            if (_pool && _slot) {
+                _slot->object()->~TType();
+                _slot->constructed = false;
+                _pool->_available.push_back(_slot);
             }
         }
 
         TType* operator->() {
-            return _object;
+            return _slot->object();
         }
 
         const TType* operator->() const {
-            return _object;
+            return _slot->object();
         }
 
     private:
         Pool* _pool;
-        TType* _object;
+        Slot* _slot;
     };
 
     void resize(std::size_t count) {
-        if (count < _allocated.size()) {
-            // shrink is harder and usually skipped unless you want to support it
-            throw std::runtime_error("Pool: shrinking not implemented safely");
+        while (_slots.size() < count) {
+            auto slot = std::make_unique<Slot>();
+            _available.push_back(slot.get());
+            _slots.push_back(std::move(slot));
         }
 
-        while (_allocated.size() < count) {
-            auto storage = std::make_unique<TType>();
-            TType* raw = storage.get();
-            _storage.push_back(std::move(storage));
-            _available.push_back(raw);
+        while (_slots.size() > count) {
+            if (_available.empty())
+                throw std::runtime_error(
+                    "Pool: cannot shrink while all remaining objects are acquired");
+
+            Slot* removable = _available.back();
+            _available.pop_back();
+
+            for (auto it = _slots.begin(); it != _slots.end(); ++it) {
+                if (it->get() == removable) {
+                    _slots.erase(it);
+                    break;
+                }
+            }
         }
     }
 
@@ -365,29 +396,26 @@ public:
         if (_available.empty())
             throw std::runtime_error("Pool: no available object");
 
-        TType* raw = _available.back();
+        Slot* slot = _available.back();
         _available.pop_back();
-
-        new (raw) TType(std::forward<TArgs>(args)...);
-        return Object(this, raw);
+        new (&slot->storage) TType(std::forward<TArgs>(args)...);
+        slot->constructed = true;
+        return Object(this, slot);
     }
 
 private:
-    void release(TType* obj) {
-        _available.push_back(obj);
-    }
-
-    std::vector<std::unique_ptr<TType>> _storage;
-    std::vector<TType*> _available;
+    std::vector<std::unique_ptr<Slot>> _slots;
+    std::vector<Slot*> _available;
 };
 
 #endif
 ```
 
 Notes:
-- Keep the logic simple and explicit.
-- Do not return the same object twice at the same time.
-- For safe shrink behavior, you need a stricter ownership model than a bare free-list.
+- The pool must outlive every `Pool::Object` acquired from it.
+- `Object` must be move-only; otherwise two wrappers could destroy and release one slot twice.
+- Growth adds unconstructed storage. `acquire()` is the only place that constructs `TType`.
+- Shrinking removes only available slots. It must never invalidate an acquired object.
 
 ---
 
